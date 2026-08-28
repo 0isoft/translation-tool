@@ -6,11 +6,12 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "certs": "office-addin-dev-certs install"
+    "certs": "office-addin-dev-certs install",
+    "validate:manifest": "npx --yes office-addin-manifest validate ../manifest.xml"
   },
   "devDependencies": {
-    "@types/office-js": "^1.0.500",
     "@types/node": "^22.0.0",
+    "@types/office-js": "^1.0.500",
     "office-addin-dev-certs": "^2.0.10",
     "typescript": "^5.9.0",
     "vite": "^7.0.0"
