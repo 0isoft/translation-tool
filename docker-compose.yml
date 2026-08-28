@@ -1,0 +1,32 @@
+services:
+
+  frontend:
+    build:
+      context: ./frontend
+
+    environment:
+      BACKEND_URL: http://backend:8000
+      HTTPS_CERT_PATH: /certs/localhost.crt
+      HTTPS_KEY_PATH: /certs/localhost.key
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - ${HOME}/.office-addin-dev-certs:/certs:ro
+
+    depends_on:
+      - backend
+
+
+  backend:
+    build:
+      context: ./backend
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./backend:/app
