@@ -33,7 +33,7 @@ Office.onReady((info) => {
 
     uppercaseChangedParagraphsButton.addEventListener(
         "click",
-        uppercaseChangedParagraphs
+        uppercaseCorrespondingTableParagraphs
     );
 });
 
@@ -105,14 +105,27 @@ async function analyzeSelection(): Promise<void> {
 
 
 type UppercaseResult = {
-    paragraphsWithChanges: number;
+    tables: number;
+    eligibleRows: number;
+    sourceParagraphs: number;
     updated: number;
-    deletionOnly: number;
-    alreadyUppercase: number;
+    emptyTargets: number;
+    alreadyUppercaseTargets: number;
+    ambiguousParagraphs: number;
+    invalidRows: number;
+    unequalParagraphCountRows: number;
+    missingTargets: number;
 };
 
 
-async function uppercaseChangedParagraphs(): Promise<void> {
+type InspectedParagraph = {
+    paragraph: Word.Paragraph;
+    trackedChanges: Word.TrackedChangeCollection;
+    currentText: OfficeExtension.ClientResult<string>;
+};
+
+
+async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
     if (!Office.context.requirements.isSetSupported("WordApi", "1.6")) {
         output.textContent =
             "This version of Word does not support tracked-change inspection (WordApi 1.6).";
@@ -120,71 +133,176 @@ async function uppercaseChangedParagraphs(): Promise<void> {
     }
 
     uppercaseChangedParagraphsButton.disabled = true;
-    output.textContent = "Inspecting tracked changes...";
+    output.textContent = "Inspecting tracked changes inside tables...";
 
     try {
         const result = await Word.run(async (context): Promise<UppercaseResult> => {
             const wordDocument = context.document;
-            const paragraphs = wordDocument.body.paragraphs;
+            const tables = wordDocument.body.tables;
 
             wordDocument.load("changeTrackingMode");
-            paragraphs.load("items");
+            tables.load("items");
             await context.sync();
 
-            const inspectedParagraphs = paragraphs.items.map((paragraph) => {
-                const trackedChanges = paragraph.getTrackedChanges();
-                const currentText = paragraph.getReviewedText(
-                    Word.ChangeTrackingVersion.current
-                );
-
-                trackedChanges.load("items");
-
-                return {
-                    paragraph,
-                    trackedChanges,
-                    currentText
-                };
+            const tableRows = tables.items.map((table) => {
+                table.rows.load("items/cellCount");
+                return table.rows;
             });
 
             await context.sync();
 
             const result: UppercaseResult = {
-                paragraphsWithChanges: 0,
+                tables: tables.items.length,
+                eligibleRows: 0,
+                sourceParagraphs: 0,
                 updated: 0,
-                deletionOnly: 0,
-                alreadyUppercase: 0
+                emptyTargets: 0,
+                alreadyUppercaseTargets: 0,
+                ambiguousParagraphs: 0,
+                invalidRows: 0,
+                unequalParagraphCountRows: 0,
+                missingTargets: 0
             };
+
+            const eligibleRows: Word.TableRow[] = [];
+
+            for (const rows of tableRows) {
+                for (const row of rows.items) {
+                    if (row.cellCount !== 3) {
+                        result.invalidRows += 1;
+                        continue;
+                    }
+
+                    row.cells.load("items");
+                    eligibleRows.push(row);
+                }
+            }
+
+            await context.sync();
+
+            const rowParagraphCollections = eligibleRows.map((row) => {
+                const collections = row.cells.items.map((cell) => {
+                    const paragraphs = cell.body.paragraphs;
+                    paragraphs.load("items");
+                    return paragraphs;
+                });
+
+                return {
+                    row,
+                    collections
+                };
+            });
+
+            await context.sync();
+
+            const inspectedRows: InspectedParagraph[][][] = [];
+
+            for (const row of rowParagraphCollections) {
+                const paragraphCounts = row.collections.map(
+                    (collection) => collection.items.length
+                );
+
+                if (!paragraphCounts.every(
+                    (count) => count === paragraphCounts[0]
+                )) {
+                    result.unequalParagraphCountRows += 1;
+                }
+
+                result.eligibleRows += 1;
+
+                const inspectedCells = row.collections.map((collection) =>
+                    collection.items.map((paragraph): InspectedParagraph => {
+                        const trackedChanges = paragraph.getTrackedChanges();
+                        const currentText = paragraph.getReviewedText(
+                            Word.ChangeTrackingVersion.current
+                        );
+
+                        trackedChanges.load("items");
+
+                        return {
+                            paragraph,
+                            trackedChanges,
+                            currentText
+                        };
+                    })
+                );
+
+                inspectedRows.push(inspectedCells);
+            }
+
+            await context.sync();
 
             const replacements: Array<{
                 paragraph: Word.Paragraph;
                 text: string;
             }> = [];
 
-            for (const inspected of inspectedParagraphs) {
-                if (inspected.trackedChanges.items.length === 0) {
-                    continue;
+            for (const cells of inspectedRows) {
+                const paragraphCount = Math.max(
+                    ...cells.map((cell) => cell.length)
+                );
+
+                for (let paragraphIndex = 0;
+                    paragraphIndex < paragraphCount;
+                    paragraphIndex += 1) {
+                    const changedCellIndexes = cells
+                        .map((cell, cellIndex) => ({
+                            cellIndex,
+                            hasChanges: Boolean(
+                                cell[paragraphIndex]
+                                && cell[paragraphIndex]
+                                    .trackedChanges.items.length > 0
+                            )
+                        }))
+                        .filter((cell) => cell.hasChanges)
+                        .map((cell) => cell.cellIndex);
+
+                    if (changedCellIndexes.length === 0) {
+                        continue;
+                    }
+
+                    if (changedCellIndexes.length !== 1) {
+                        result.ambiguousParagraphs += 1;
+                        continue;
+                    }
+
+                    result.sourceParagraphs += 1;
+                    const sourceCellIndex = changedCellIndexes[0];
+
+                    for (let targetCellIndex = 0;
+                        targetCellIndex < cells.length;
+                        targetCellIndex += 1) {
+                        if (targetCellIndex === sourceCellIndex) {
+                            continue;
+                        }
+
+                        const target = cells[targetCellIndex][paragraphIndex];
+
+                        if (!target) {
+                            result.missingTargets += 1;
+                            continue;
+                        }
+
+                        const currentText = target.currentText.value;
+
+                        if (currentText.length === 0) {
+                            result.emptyTargets += 1;
+                            continue;
+                        }
+
+                        const uppercaseText = currentText.toLocaleUpperCase();
+
+                        if (uppercaseText === currentText) {
+                            result.alreadyUppercaseTargets += 1;
+                            continue;
+                        }
+
+                        replacements.push({
+                            paragraph: target.paragraph,
+                            text: uppercaseText
+                        });
+                    }
                 }
-
-                result.paragraphsWithChanges += 1;
-
-                const currentText = inspected.currentText.value;
-
-                if (currentText.length === 0) {
-                    result.deletionOnly += 1;
-                    continue;
-                }
-
-                const uppercaseText = currentText.toLocaleUpperCase();
-
-                if (uppercaseText === currentText) {
-                    result.alreadyUppercase += 1;
-                    continue;
-                }
-
-                replacements.push({
-                    paragraph: inspected.paragraph,
-                    text: uppercaseText
-                });
             }
 
             if (replacements.length === 0) {
@@ -224,10 +342,16 @@ async function uppercaseChangedParagraphs(): Promise<void> {
         });
 
         output.textContent = [
-            `Paragraphs containing tracked changes: ${result.paragraphsWithChanges}`,
-            `Uppercased with Track Changes: ${result.updated}`,
-            `Skipped because only deleted text remains: ${result.deletionOnly}`,
-            `Skipped because already uppercase: ${result.alreadyUppercase}`
+            `Tables inspected: ${result.tables}`,
+            `Eligible three-cell rows: ${result.eligibleRows}`,
+            `Changed source paragraphs: ${result.sourceParagraphs}`,
+            `Sibling paragraphs uppercased with Track Changes: ${result.updated}`,
+            `Empty sibling paragraphs skipped: ${result.emptyTargets}`,
+            `Already-uppercase siblings skipped: ${result.alreadyUppercaseTargets}`,
+            `Ambiguous positions skipped: ${result.ambiguousParagraphs}`,
+            `Non-three-cell rows skipped: ${result.invalidRows}`,
+            `Rows with unequal paragraph counts (processed): ${result.unequalParagraphCountRows}`,
+            `Missing sibling paragraph positions skipped: ${result.missingTargets}`
         ].join("\n");
     } catch (error) {
         console.error(error);
