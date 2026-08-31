@@ -25,6 +25,9 @@ services:
     build:
       context: ./backend
 
+    env_file:
+      - ./backend/.env.dev
+
     ports:
       - "8000:8000"
 
