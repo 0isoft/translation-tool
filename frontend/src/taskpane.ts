@@ -12,6 +12,12 @@ const uppercaseChangedParagraphsButton =
         "uppercase-changed-paragraphs"
     ) as HTMLButtonElement;
 
+const markRevisionsSeenButton =
+    document.getElementById("mark-revisions-seen") as HTMLButtonElement;
+
+const REVISION_BASELINE_KEY =
+    "translationTool.revisionBaseline.v1";
+
 
 Office.onReady((info) => {
     if (info.host !== Office.HostType.Word) {
@@ -34,6 +40,11 @@ Office.onReady((info) => {
     uppercaseChangedParagraphsButton.addEventListener(
         "click",
         uppercaseCorrespondingTableParagraphs
+    );
+
+    markRevisionsSeenButton.addEventListener(
+        "click",
+        markCurrentRevisionsAsSeen
     );
 });
 
@@ -115,6 +126,8 @@ type UppercaseResult = {
     invalidRows: number;
     unequalParagraphCountRows: number;
     missingTargets: number;
+    structuralSources: number;
+    baselineCreated: boolean;
 };
 
 
@@ -122,7 +135,141 @@ type InspectedParagraph = {
     paragraph: Word.Paragraph;
     trackedChanges: Word.TrackedChangeCollection;
     currentText: OfficeExtension.ClientResult<string>;
+    originalText: OfficeExtension.ClientResult<string>;
+    originalPosition?: number;
+    newRevisionCount: number;
 };
+
+
+type RevisionCounts = Record<string, number>;
+
+
+type RevisionBaseline = {
+    version: 1;
+    fingerprints: RevisionCounts;
+};
+
+
+function hasMeaningfulParagraphText(value: string): boolean {
+    // Word can expose paragraph, line, and table-cell markers as characters.
+    // None of them make a blank visual line a logical paragraph for matching.
+    return value.replace(/[\s\u0007]/gu, "").length > 0;
+}
+
+
+function parseRevisionBaseline(value: unknown): RevisionCounts {
+    if (typeof value !== "string") {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(value) as Partial<RevisionBaseline>;
+
+        if (parsed.version !== 1
+            || !parsed.fingerprints
+            || typeof parsed.fingerprints !== "object") {
+            return {};
+        }
+
+        return parsed.fingerprints;
+    } catch {
+        return {};
+    }
+}
+
+
+async function sha256(value: string): Promise<string> {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+}
+
+
+async function getRevisionFingerprint(
+    change: Word.TrackedChange
+): Promise<string> {
+    return sha256([
+        change.author,
+        change.date.toISOString(),
+        change.type,
+        change.text
+    ].join("\u0000"));
+}
+
+
+function addFingerprint(
+    counts: RevisionCounts,
+    fingerprint: string
+): void {
+    counts[fingerprint] = (counts[fingerprint] ?? 0) + 1;
+}
+
+
+async function getCurrentRevisionCounts(
+    context: Word.RequestContext
+): Promise<RevisionCounts> {
+    const revisions = context.document.body.getTrackedChanges();
+    revisions.load("items/author,items/date,items/text,items/type");
+    await context.sync();
+
+    const fingerprints = await Promise.all(
+        revisions.items.map(getRevisionFingerprint)
+    );
+    const counts: RevisionCounts = {};
+
+    for (const fingerprint of fingerprints) {
+        addFingerprint(counts, fingerprint);
+    }
+
+    return counts;
+}
+
+
+function saveRevisionBaseline(
+    context: Word.RequestContext,
+    fingerprints: RevisionCounts
+): void {
+    const baseline: RevisionBaseline = {
+        version: 1,
+        fingerprints
+    };
+
+    context.document.settings.add(
+        REVISION_BASELINE_KEY,
+        JSON.stringify(baseline)
+    );
+}
+
+
+async function markCurrentRevisionsAsSeen(): Promise<void> {
+    markRevisionsSeenButton.disabled = true;
+    uppercaseChangedParagraphsButton.disabled = true;
+    output.textContent = "Recording the current revision baseline...";
+
+    try {
+        const revisionCount = await Word.run(async (context) => {
+            const fingerprints = await getCurrentRevisionCounts(context);
+            saveRevisionBaseline(context, fingerprints);
+            await context.sync();
+
+            return Object.values(fingerprints)
+                .reduce((total, count) => total + count, 0);
+        });
+
+        output.textContent =
+            `Recorded ${revisionCount} current revisions as seen.\n`
+            + "Make a new tracked edit, then run propagation.";
+    } catch (error) {
+        console.error(error);
+        output.textContent = `Error: ${String(error)}`;
+    } finally {
+        markRevisionsSeenButton.disabled = false;
+        uppercaseChangedParagraphsButton.disabled = false;
+    }
+}
 
 
 async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
@@ -139,10 +286,21 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
         const result = await Word.run(async (context): Promise<UppercaseResult> => {
             const wordDocument = context.document;
             const tables = wordDocument.body.tables;
+            const baselineSetting = wordDocument.settings
+                .getItemOrNullObject(REVISION_BASELINE_KEY);
 
             wordDocument.load("changeTrackingMode");
             tables.load("items");
+            baselineSetting.load("value");
             await context.sync();
+
+            const baselineCreated = baselineSetting.isNullObject;
+            const savedRevisionCounts = baselineCreated
+                ? {}
+                : parseRevisionBaseline(baselineSetting.value);
+            const remainingKnownRevisions: RevisionCounts = {
+                ...savedRevisionCounts
+            };
 
             const tableRows = tables.items.map((table) => {
                 table.rows.load("items/cellCount");
@@ -161,7 +319,9 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
                 ambiguousParagraphs: 0,
                 invalidRows: 0,
                 unequalParagraphCountRows: 0,
-                missingTargets: 0
+                missingTargets: 0,
+                structuralSources: 0,
+                baselineCreated
             };
 
             const eligibleRows: Word.TableRow[] = [];
@@ -216,13 +376,20 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
                         const currentText = paragraph.getReviewedText(
                             Word.ChangeTrackingVersion.current
                         );
+                        const originalText = paragraph.getReviewedText(
+                            Word.ChangeTrackingVersion.original
+                        );
 
-                        trackedChanges.load("items");
+                        trackedChanges.load(
+                            "items/author,items/date,items/text,items/type"
+                        );
 
                         return {
                             paragraph,
                             trackedChanges,
-                            currentText
+                            currentText,
+                            originalText,
+                            newRevisionCount: 0
                         };
                     })
                 );
@@ -232,27 +399,89 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
 
             await context.sync();
 
+            for (const cells of inspectedRows) {
+                for (const cell of cells) {
+                    let originalPosition = 0;
+
+                    for (const inspected of cell) {
+                        if (hasMeaningfulParagraphText(
+                            inspected.originalText.value
+                        )) {
+                            inspected.originalPosition = originalPosition;
+                            originalPosition += 1;
+                        }
+
+                        const fingerprints = await Promise.all(
+                            inspected.trackedChanges.items.map(
+                                getRevisionFingerprint
+                            )
+                        );
+
+                        for (const fingerprint of fingerprints) {
+                            const knownCount =
+                                remainingKnownRevisions[fingerprint] ?? 0;
+
+                            if (knownCount > 0) {
+                                remainingKnownRevisions[fingerprint] =
+                                    knownCount - 1;
+                            } else {
+                                inspected.newRevisionCount += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
             const replacements: Array<{
                 paragraph: Word.Paragraph;
                 text: string;
             }> = [];
 
             for (const cells of inspectedRows) {
-                const paragraphCount = Math.max(
-                    ...cells.map((cell) => cell.length)
-                );
+                const paragraphsByOriginalPosition = cells.map((cell) => {
+                    const positions = new Map<number, InspectedParagraph>();
 
-                for (let paragraphIndex = 0;
-                    paragraphIndex < paragraphCount;
-                    paragraphIndex += 1) {
-                    const changedCellIndexes = cells
-                        .map((cell, cellIndex) => ({
+                    for (const paragraph of cell) {
+                        if (paragraph.originalPosition === undefined) {
+                            if (paragraph.newRevisionCount > 0
+                                && hasMeaningfulParagraphText(
+                                    paragraph.currentText.value
+                                )) {
+                                result.structuralSources += 1;
+                            }
+
+                            continue;
+                        }
+
+                        positions.set(paragraph.originalPosition, paragraph);
+                    }
+
+                    return positions;
+                });
+                const originalPositions = new Set<number>();
+
+                for (const positions of paragraphsByOriginalPosition) {
+                    for (const position of positions.keys()) {
+                        originalPositions.add(position);
+                    }
+                }
+
+                for (const originalPosition of originalPositions) {
+                    const changedCellIndexes = paragraphsByOriginalPosition
+                        .map((positions, cellIndex) => ({
                             cellIndex,
-                            hasChanges: Boolean(
-                                cell[paragraphIndex]
-                                && cell[paragraphIndex]
-                                    .trackedChanges.items.length > 0
-                            )
+                            hasChanges: (() => {
+                                const paragraph =
+                                    positions.get(originalPosition);
+
+                                return Boolean(
+                                    paragraph
+                                    && paragraph.newRevisionCount > 0
+                                    && hasMeaningfulParagraphText(
+                                        paragraph.currentText.value
+                                    )
+                                );
+                            })()
                         }))
                         .filter((cell) => cell.hasChanges)
                         .map((cell) => cell.cellIndex);
@@ -276,7 +505,9 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
                             continue;
                         }
 
-                        const target = cells[targetCellIndex][paragraphIndex];
+                        const target = paragraphsByOriginalPosition
+                            [targetCellIndex]
+                            .get(originalPosition);
 
                         if (!target) {
                             result.missingTargets += 1;
@@ -285,7 +516,7 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
 
                         const currentText = target.currentText.value;
 
-                        if (currentText.length === 0) {
+                        if (!hasMeaningfulParagraphText(currentText)) {
                             result.emptyTargets += 1;
                             continue;
                         }
@@ -305,15 +536,11 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
                 }
             }
 
-            if (replacements.length === 0) {
-                return result;
-            }
-
             const originalTrackingMode = wordDocument.changeTrackingMode;
             const mustRestoreTrackingMode =
                 originalTrackingMode === Word.ChangeTrackingMode.off;
 
-            if (mustRestoreTrackingMode) {
+            if (replacements.length > 0 && mustRestoreTrackingMode) {
                 wordDocument.changeTrackingMode =
                     Word.ChangeTrackingMode.trackAll;
                 await context.sync();
@@ -332,11 +559,16 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
                 await context.sync();
                 result.updated = replacements.length;
             } finally {
-                if (mustRestoreTrackingMode) {
+                if (replacements.length > 0 && mustRestoreTrackingMode) {
                     wordDocument.changeTrackingMode = originalTrackingMode;
                     await context.sync();
                 }
             }
+
+            const currentRevisionCounts =
+                await getCurrentRevisionCounts(context);
+            saveRevisionBaseline(context, currentRevisionCounts);
+            await context.sync();
 
             return result;
         });
@@ -351,7 +583,11 @@ async function uppercaseCorrespondingTableParagraphs(): Promise<void> {
             `Ambiguous positions skipped: ${result.ambiguousParagraphs}`,
             `Non-three-cell rows skipped: ${result.invalidRows}`,
             `Rows with unequal paragraph counts (processed): ${result.unequalParagraphCountRows}`,
-            `Missing sibling paragraph positions skipped: ${result.missingTargets}`
+            `Missing sibling paragraph positions skipped: ${result.missingTargets}`,
+            `Structural paragraph changes skipped: ${result.structuralSources}`,
+            result.baselineCreated
+                ? "No prior baseline: all existing revisions were treated as new."
+                : "Only revisions newer than the saved baseline were treated as sources."
         ].join("\n");
     } catch (error) {
         console.error(error);
