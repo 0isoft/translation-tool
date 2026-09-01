@@ -5,6 +5,7 @@ import type {
 
 
 const TRANSLATION_REQUEST_TIMEOUT_MS = 180_000;
+const HEALTH_REQUEST_TIMEOUT_MS = 10_000;
 
 
 async function errorDetail(response: Response): Promise<string> {
@@ -16,6 +17,41 @@ async function errorDetail(response: Response): Promise<string> {
     } catch {
         return await response.text();
     }
+}
+
+
+export async function assertTranslationApiAvailable(): Promise<void> {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+        () => controller.abort(),
+        HEALTH_REQUEST_TIMEOUT_MS
+    );
+
+    try {
+        const response = await fetch("/api/health", {
+            cache: "no-store",
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            throw new Error(
+                `Translation service health check returned ${response.status}.`
+            );
+        }
+    } catch (error) {
+        throw new Error(
+            "The translation service is unreachable. Confirm that the "
+            + "Docker services are running, then retry.",
+            { cause: error }
+        );
+    } finally {
+        window.clearTimeout(timeout);
+    }
+}
+
+
+export function isNetworkLoadFailure(error: unknown): boolean {
+    return error instanceof TypeError
+        && /load failed|failed to fetch|network/i.test(error.message);
 }
 
 

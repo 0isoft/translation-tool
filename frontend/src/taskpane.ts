@@ -2,7 +2,11 @@ import {
     getTranslationConfig,
     saveTranslationConfig
 } from "./adapters/configurationStore";
-import { requestCellTranslation } from "./adapters/translationApi";
+import {
+    assertTranslationApiAvailable,
+    isNetworkLoadFailure,
+    requestCellTranslation
+} from "./adapters/translationApi";
 import {
     REVISION_BASELINE_KEY,
     addFingerprint,
@@ -68,6 +72,7 @@ const columnLanguageSelects = [1, 2, 3].map((column) =>
 const STANDARD_LANGUAGE_COLUMN_INDICES = [1, 2, 3] as const;
 const COMPACT_LANGUAGE_COLUMN_INDICES = [0, 1, 2] as const;
 const INSPECTION_ROW_BATCH_SIZE = 10;
+const MAX_CONSECUTIVE_NETWORK_FAILURES = 3;
 
 
 Office.onReady((info) => {
@@ -363,6 +368,11 @@ async function translateChangedTableParagraphs(
                     .join(" and ")}`
             ]
         );
+        await showProgress(
+            startedAt,
+            "Checking the translation service..."
+        );
+        await assertTranslationApiAvailable();
         const result = await Word.run(async (context): Promise<PropagationResult> => {
             const wordDocument = context.document;
             const tables = wordDocument.body.tables;
@@ -776,6 +786,7 @@ async function translateChangedTableParagraphs(
             );
 
             const mutations: PlannedMutation[] = [];
+            let consecutiveNetworkFailures = 0;
 
             for (let inspectedRowIndex = 0;
                 inspectedRowIndex < inspectedRows.length;
@@ -909,10 +920,16 @@ async function translateChangedTableParagraphs(
                         changed_source_paragraphs: changedSourceParagraphs,
                         targets
                     }, requestId);
+                    consecutiveNetworkFailures = 0;
                 } catch (error) {
                     const message = String(error);
                     result.failedCellPlans += 1;
                     result.translationErrors.push(message);
+                    if (isNetworkLoadFailure(error)) {
+                        consecutiveNetworkFailures += 1;
+                    } else {
+                        consecutiveNetworkFailures = 0;
+                    }
                     const failedIndices = new Set(
                         changedSourceParagraphs.map((paragraph) =>
                             paragraph.index
@@ -928,6 +945,16 @@ async function translateChangedTableParagraphs(
                         `[tracked-change propagation] ${requestId}`,
                         error
                     );
+                    if (consecutiveNetworkFailures
+                        >= MAX_CONSECUTIVE_NETWORK_FAILURES) {
+                        throw new Error(
+                            "Translation service became unreachable during "
+                            + "processing. Stopped after three consecutive "
+                            + "network failures; no document changes or "
+                            + "revision baseline were committed. Restart the "
+                            + "services and use Retry all tracked changes."
+                        );
+                    }
                     continue;
                 }
 

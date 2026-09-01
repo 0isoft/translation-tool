@@ -1,6 +1,8 @@
 services:
 
   frontend:
+    init: true
+    restart: unless-stopped
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -23,6 +25,8 @@ services:
 
 
   backend:
+    init: true
+    restart: unless-stopped
     build:
       context: ./backend
 
