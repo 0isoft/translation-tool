@@ -47,11 +47,17 @@ async def propagate_cell_changes(
             detail="Targets must be the two non-source columns.",
         )
 
+    expected_target_languages = {
+        "English", "French", "German"
+    } - {request.source_language}
     if {target.expected_language for target in request.targets} \
-            != {"French", "German"}:
+            != expected_target_languages:
         raise ApplicationRequestError(
             status_code=422,
-            detail="Targets must contain French and German exactly once.",
+            detail=(
+                "Targets must contain each non-reference language exactly "
+                "once."
+            ),
         )
 
     source_indices = {paragraph.index for paragraph in request.source_cell}
@@ -84,8 +90,15 @@ async def propagate_cell_changes(
     ]
 
     logger.info(
-        "translation request %s: %d changed source paragraphs",
+        "translation request %s: reference column %d (%s), targets %s, "
+        "%d changed source paragraphs",
         request_id,
+        request.source_column,
+        request.source_language,
+        ", ".join(
+            f"column {target.column} ({target.expected_language})"
+            for target in request.targets
+        ),
         len(request.changed_source_paragraphs),
     )
 
@@ -106,6 +119,7 @@ async def propagate_cell_changes(
 
     for new_paragraph in new_source_paragraphs:
         new_paragraph_input = {
+            "source_language": request.source_language,
             "source_cell": [
                 paragraph.model_dump() for paragraph in request.source_cell
             ],
@@ -242,6 +256,7 @@ async def propagate_cell_changes(
             for paragraph in remaining_changes
         }
         claude_input = {
+            "source_language": request.source_language,
             "source_cell": [
                 paragraph.model_dump() for paragraph in request.source_cell
             ],
@@ -348,10 +363,20 @@ async def propagate_cell_changes(
     warnings = get_numeric_warnings(translations, all_source_changes)
 
     logger.info(
-        "translation request %s completed in %.2fs with %d edits",
+        "translation request %s completed in %.2fs with operations %s",
         request_id,
         time.monotonic() - started_at,
-        sum(len(translation.edits) for translation in translations),
+        ", ".join(
+            f"column {translation.column} ({translation.language}): "
+            + "/".join(
+                f"{operation}={sum(
+                    edit.operation == operation
+                    for edit in translation.edits
+                )}"
+                for operation in ("replace", "insert", "none")
+            )
+            for translation in translations
+        ),
     )
 
     return TranslateCellChangesResponse(

@@ -31,8 +31,7 @@ function isTranslationConfig(value: unknown): value is TranslationConfig {
         && languages.every(
             (language) => LANGUAGES.has(language as Language)
         )
-        && new Set(languages).size === 3
-        && languages[(candidate.source_column ?? 1) - 1] === "English";
+        && new Set(languages).size === 3;
 }
 
 
@@ -58,8 +57,7 @@ export async function saveTranslationConfig(
 ): Promise<TranslationConfig> {
     if (!isTranslationConfig(config)) {
         throw new Error(
-            "Columns 1-3 must use English, French, and German exactly once, "
-            + "with English selected as the source column."
+            "Columns 1-3 must use English, French, and German exactly once."
         );
     }
 

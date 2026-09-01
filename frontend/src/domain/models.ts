@@ -26,12 +26,13 @@ export type ChangedSourceParagraphInput = {
 
 export type TargetCellInput = {
     column: number;
-    expected_language: "French" | "German";
+    expected_language: Language;
     paragraphs: CellParagraphInput[];
 };
 
 export type TranslateCellChangesRequest = {
     source_column: number;
+    source_language: Language;
     source_cell: CellParagraphInput[];
     changed_source_paragraphs: ChangedSourceParagraphInput[];
     targets: TargetCellInput[];
@@ -47,7 +48,7 @@ export type CellEditOutput = {
 
 export type CellTranslationOutput = {
     column: number;
-    language: "French" | "German";
+    language: Language;
     edits: CellEditOutput[];
 };
 

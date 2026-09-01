@@ -273,6 +273,7 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
         ]
         request = TranslateCellChangesRequest(
             source_column=3,
+            source_language="English",
             source_cell=source_cell,
             changed_source_paragraphs=[changed_input(new_paragraph)],
             targets=targets,
@@ -319,6 +320,7 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
 
         request = TranslateCellChangesRequest(
             source_column=3,
+            source_language="English",
             source_cell=[
                 CellParagraphInput(
                     index=paragraph.current_index,
@@ -389,6 +391,7 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
 
         request = TranslateCellChangesRequest(
             source_column=3,
+            source_language="English",
             source_cell=[
                 CellParagraphInput(
                     index=paragraph.current_index,
@@ -443,6 +446,7 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
         first_new_decision = source[21]
         request = TranslateCellChangesRequest(
             source_column=3,
+            source_language="English",
             source_cell=[
                 CellParagraphInput(
                     index=paragraph.current_index,

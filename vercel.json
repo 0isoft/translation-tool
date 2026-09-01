@@ -21,11 +21,37 @@
       "destination": { "service": "backend" }
     },
     {
+      "source": "/taskpane",
+      "destination": {
+        "service": "frontend",
+        "path": "/taskpane/index.html"
+      }
+    },
+    {
+      "source": "/taskpane/",
+      "destination": {
+        "service": "frontend",
+        "path": "/taskpane/index.html"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": { "service": "frontend" }
     }
   ],
   "headers": [
+    {
+      "source": "/taskpane",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
+      "source": "/taskpane/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [

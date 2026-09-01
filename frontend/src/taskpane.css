@@ -43,6 +43,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .primary-action:hover:not(:disabled) { background: #24644e; }
 .secondary-action { color: #214d3e; background: #edf4f0; border-color: #b9cbc3; }
 .quiet-action { color: #5f6863; background: transparent; border-color: #d5d7d4; }
+.configuration-status {
+    margin: 9px 2px 0; color: #8a5a23; font-size: 11px; line-height: 1.4;
+}
+.configuration-status.saved { color: #276148; }
 .status-panel { background: #202a25; border-color: #202a25; }
 .status-panel h2 { color: #e7ece8; }
 pre {

@@ -23,7 +23,8 @@ import type {
     RevisionCounts,
     RevisionInput,
     TargetCellInput,
-    TranslateCellChangesResponse
+    TranslateCellChangesResponse,
+    TranslationConfig
 } from "./domain/models";
 import {
     getSingleSpanDiff,
@@ -52,6 +53,9 @@ const sourceColumnSelect =
 
 const saveSourceColumnButton =
     document.getElementById("save-source-column") as HTMLButtonElement;
+
+const configurationStatus =
+    document.getElementById("configuration-status") as HTMLParagraphElement;
 
 const columnLanguageSelects = [1, 2, 3].map((column) =>
     document.getElementById(
@@ -96,8 +100,12 @@ Office.onReady((info) => {
 
     sourceColumnSelect.addEventListener(
         "change",
-        alignEnglishLanguageWithSourceColumn
+        markConfigurationUnsaved
     );
+
+    columnLanguageSelects.forEach((select) => {
+        select.addEventListener("change", markConfigurationUnsaved);
+    });
 
     void loadSourceColumn();
 });
@@ -110,27 +118,74 @@ async function loadSourceColumn(): Promise<void> {
         columnLanguageSelects[0].value = config.column_1_language;
         columnLanguageSelects[1].value = config.column_2_language;
         columnLanguageSelects[2].value = config.column_3_language;
+        updateReferenceColumnLabels();
+        showConfigurationSaved(config);
     } catch (error) {
         console.error(error);
+        configurationStatus.classList.remove("saved");
+        configurationStatus.textContent = `Not saved: ${String(error)}`;
+        saveSourceColumnButton.textContent =
+            "Save reference and language columns";
         output.textContent = `Error: ${String(error)}`;
     }
 }
 
 
-function alignEnglishLanguageWithSourceColumn(): void {
-    const sourceCellIndex = Number(sourceColumnSelect.value) - 1;
-    const previousEnglishIndex = columnLanguageSelects.findIndex(
-        (select) => select.value === "English"
-    );
-    const selectedPreviousLanguage =
-        columnLanguageSelects[sourceCellIndex].value;
-
-    columnLanguageSelects[sourceCellIndex].value = "English";
-    if (previousEnglishIndex >= 0
-        && previousEnglishIndex !== sourceCellIndex) {
-        columnLanguageSelects[previousEnglishIndex].value =
-            selectedPreviousLanguage;
+function updateReferenceColumnLabels(): void {
+    for (let index = 0; index < sourceColumnSelect.options.length; index += 1) {
+        const language = columnLanguageSelects[index].value;
+        sourceColumnSelect.options[index].textContent =
+            `Column ${index + 1} — ${language}`;
     }
+}
+
+
+function markConfigurationUnsaved(): void {
+    updateReferenceColumnLabels();
+    configurationStatus.classList.remove("saved");
+    configurationStatus.textContent =
+        "Unsaved changes — Translate will save and use these selections automatically.";
+    saveSourceColumnButton.textContent =
+        "Save reference and language columns";
+}
+
+
+function showConfigurationSaved(config: TranslationConfig): void {
+    const languages = [
+        config.column_1_language,
+        config.column_2_language,
+        config.column_3_language
+    ];
+    configurationStatus.classList.add("saved");
+    configurationStatus.textContent =
+        `Saved: column ${config.source_column} `
+        + `(${languages[config.source_column - 1]}) is the reference.`;
+    saveSourceColumnButton.textContent = "Saved ✓";
+}
+
+
+function configurationFromControls(): TranslationConfig {
+    const sourceColumn = Number(sourceColumnSelect.value);
+    const languages = columnLanguageSelects.map(
+        (select) => select.value as Language
+    );
+    if (!Number.isInteger(sourceColumn)
+        || sourceColumn < 1
+        || sourceColumn > 3) {
+        throw new Error("Reference column must be column 1, 2, or 3.");
+    }
+    if (new Set(languages).size !== 3) {
+        throw new Error(
+            "Columns 1-3 must use English, French, and German exactly once."
+        );
+    }
+
+    return {
+        source_column: sourceColumn,
+        column_1_language: languages[0],
+        column_2_language: languages[1],
+        column_3_language: languages[2]
+    };
 }
 
 
@@ -138,28 +193,25 @@ async function saveSourceColumn(): Promise<void> {
     saveSourceColumnButton.disabled = true;
 
     try {
-        const sourceColumn = Number(sourceColumnSelect.value);
-        alignEnglishLanguageWithSourceColumn();
-        const languages = columnLanguageSelects.map(
-            (select) => select.value as Language
-        );
-        if (new Set(languages).size !== 3) {
-            throw new Error(
-                "Columns 1-3 must use English, French, and German exactly once."
-            );
-        }
-
-        await saveTranslationConfig({
-            source_column: sourceColumn,
-            column_1_language: languages[0],
-            column_2_language: languages[1],
-            column_3_language: languages[2]
-        });
+        const config = configurationFromControls();
+        await saveTranslationConfig(config);
+        const languages = [
+            config.column_1_language,
+            config.column_2_language,
+            config.column_3_language
+        ];
+        showConfigurationSaved(config);
 
         output.textContent =
-            `Language columns saved: ${languages.join(" / ")}.`;
+            `Reference: column ${config.source_column} `
+            + `(${languages[config.source_column - 1]}).\n`
+            + `Language columns saved: ${languages.join(" / ")}.`;
     } catch (error) {
         console.error(error);
+        configurationStatus.classList.remove("saved");
+        configurationStatus.textContent = `Not saved: ${String(error)}`;
+        saveSourceColumnButton.textContent =
+            "Save reference and language columns";
         output.textContent = `Error: ${String(error)}`;
     } finally {
         saveSourceColumnButton.disabled = false;
@@ -288,18 +340,29 @@ async function translateChangedTableParagraphs(
     await showProgress(startedAt, "Loading translation configuration...");
 
     try {
-        const translationConfig = await getTranslationConfig();
+        // The visible controls are authoritative. Persist them automatically
+        // so Translate can never silently fall back to an older saved source.
+        const translationConfig = configurationFromControls();
+        await saveTranslationConfig(translationConfig);
+        showConfigurationSaved(translationConfig);
         const sourceColumn = translationConfig.source_column;
-        sourceColumnSelect.value = String(sourceColumn);
         const configuredLanguages: Language[] = [
             translationConfig.column_1_language,
             translationConfig.column_2_language,
             translationConfig.column_3_language
         ];
-        configuredLanguages.forEach((language, index) => {
-            columnLanguageSelects[index].value = language;
-        });
         const sourceCellIndex = sourceColumn - 1;
+        await showProgress(
+            startedAt,
+            "Using the selected reference configuration...",
+            [
+                `Reference: column ${sourceColumn} `
+                + `(${configuredLanguages[sourceCellIndex]})`,
+                `Targets: ${configuredLanguages
+                    .filter((_, index) => index !== sourceCellIndex)
+                    .join(" and ")}`
+            ]
+        );
         const result = await Word.run(async (context): Promise<PropagationResult> => {
             const wordDocument = context.document;
             const tables = wordDocument.body.tables;
@@ -812,7 +875,7 @@ async function translateChangedTableParagraphs(
                         column: targetCellIndex + 1,
                         expected_language: configuredLanguages[
                             targetCellIndex
-                        ] as "French" | "German",
+                        ],
                         paragraphs: currentParagraphs[targetCellIndex].map(
                             (paragraph) => ({
                                 index: paragraph.currentPosition!,
@@ -838,6 +901,7 @@ async function translateChangedTableParagraphs(
                 try {
                     translation = await requestCellTranslation({
                         source_column: sourceColumn,
+                        source_language: configuredLanguages[sourceCellIndex],
                         source_cell: sourceParagraphs.map((paragraph) => ({
                             index: paragraph.currentPosition!,
                             text: paragraph.currentText.value
@@ -902,6 +966,14 @@ async function translateChangedTableParagraphs(
                         || !cells[targetCellIndex]) {
                         throw new Error(
                             "Backend returned an unexpected target column."
+                        );
+                    }
+                    if (translatedCell.language
+                        !== configuredLanguages[targetCellIndex]) {
+                        throw new Error(
+                            `Backend returned ${translatedCell.language} for `
+                            + `column ${translatedCell.column}, configured as `
+                            + `${configuredLanguages[targetCellIndex]}.`
                         );
                     }
 
@@ -1011,7 +1083,7 @@ async function translateChangedTableParagraphs(
         output.textContent = [
             `Tables inspected: ${result.tables}`,
             `Rows containing language columns 1-3: ${result.eligibleRows}`,
-            `New English source paragraphs: ${result.sourceParagraphs}`,
+            `New reference-language paragraphs: ${result.sourceParagraphs}`,
             `Paragraphs translated by Claude: ${result.translatedParagraphs}`,
             `Target paragraphs updated with Track Changes: ${result.updatedTargets}`,
             `Target paragraphs edited only at changed spans: ${result.minimallyTrackedTargets}`,

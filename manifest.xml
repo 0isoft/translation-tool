@@ -3,11 +3,13 @@
     xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:type="TaskPaneApp">
-  <Id>39DA7B46-3E25-4FE8-86C0-77B1B75AF0AC</Id>
-  <Version>1.0.0.0</Version>
+  <!-- Local development uses a distinct identity so Word cannot confuse this
+       manifest with the production Vercel add-in registration. -->
+  <Id>EFD5E53A-6881-47BB-9D01-BEC98C710DEE</Id>
+  <Version>1.0.1.0</Version>
   <ProviderName>Translation Tool</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Translation Assistant"/>
+  <DisplayName DefaultValue="Translation Assistant (Local)"/>
   <Description DefaultValue="Propagate tracked changes across English, French, and German table cells."/>
   <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/>

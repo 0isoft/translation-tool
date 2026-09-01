@@ -1,14 +1,15 @@
 # Translation Assistant
 
-Microsoft Word task-pane add-in for propagating English tracked changes into
-French and German table cells.
+Microsoft Word task-pane add-in for propagating tracked changes from a selected
+English, French, or German reference column into the other two language cells.
 
 ## Deploy to Vercel
 
 Vercel replaces both the production Docker containers and Nginx. The root
 [`vercel.json`](vercel.json) deploys the Vite frontend and FastAPI backend as
 two Vercel services, routes `/api/*` and `/manifest.xml` to FastAPI, and routes
-the remaining URLs to Vite. Keep the Vercel project's Root Directory set to
+`/taskpane/` explicitly to the Word UI before routing the remaining URLs to
+Vite. Keep the Vercel project's Root Directory set to
 the repository root. Under **Build and Deployment**, set **Framework Preset**
 to **Services**; Vercel will otherwise auto-detect only FastAPI and `/` will
 return its platform `404: NOT_FOUND`. Do not configure a custom build command
@@ -65,6 +66,11 @@ Local routes:
 The first time after switching from the old single-page development setup,
 remove the old add-in registration and upload the new `manifest.xml`. Its source
 location is now `/taskpane/` rather than `/index.html`.
+
+The local manifest intentionally has a different Office add-in ID and the name
+**Translation Assistant (Local)**. This prevents Word from confusing it with
+the production Vercel manifest, whose ID must remain stable for deployed-user
+updates.
 
 The frontend image is a multi-stage Vite/Nginx build. Nginx is the only public
 container and proxies `/api/` to the private FastAPI service. FastAPI runs

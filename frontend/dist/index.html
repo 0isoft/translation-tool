@@ -45,8 +45,8 @@
     <main>
         <h1>Translation Assistant</h1>
         <p>
-            A Microsoft Word add-in that propagates tracked changes from an
-            English source cell to the corresponding French and German cells.
+            This is the Microsoft Word add-in which takes in track changes in a source cell,
+            and translates/updates the changes in the corresponding neighboring cells, for the Tab files.
         </p>
 
         <a class="download" href="/manifest.xml" download>
@@ -65,17 +65,15 @@
         </ol>
 
         <p class="note">
-            After installation, the add-in connects securely to the hosted
-            Translation Assistant service. You only need Word and an internet
-            connection. If the Upload option is unavailable, your organization
-            may have disabled custom add-ins.
+            After installation, the add-in should connect to an online server I've set up.
+
+            If the Upload option is unavailable, it's likely that Datos has disabled custom add-ins for Sharepoint apps (like MS Word), so we'll have to check with them.
         </p>
 
-        <h2>Document processing</h2>
+        <h2>Document processing, how does it work?</h2>
         <p>
-            Only affected source paragraphs and the three corresponding language
-            cells are sent to the configured translation service. The complete
-            document is not uploaded.
+            Only affected source paragraphs(+tracked changes to them), and the three corresponding language
+            cells are sent to Claude. The complete document is not uploaded.
         </p>
     </main>
 </body>

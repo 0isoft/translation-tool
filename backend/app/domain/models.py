@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 Language = Literal["English", "French", "German"]
-TargetLanguage = Literal["French", "German"]
 
 
 class RevisionInput(BaseModel):
@@ -26,12 +25,13 @@ class ChangedSourceParagraphInput(BaseModel):
 
 class TargetCellInput(BaseModel):
     column: int = Field(ge=1, le=3)
-    expected_language: TargetLanguage
+    expected_language: Language
     paragraphs: list[CellParagraphInput]
 
 
 class TranslateCellChangesRequest(BaseModel):
     source_column: int = Field(ge=1, le=3)
+    source_language: Language
     source_cell: list[CellParagraphInput]
     changed_source_paragraphs: list[ChangedSourceParagraphInput] = Field(
         min_length=1
@@ -47,7 +47,7 @@ class ClaudeCellEdit(BaseModel):
 
 
 class ClaudeTargetCellPlan(BaseModel):
-    language: TargetLanguage
+    language: Language
     edits: list[ClaudeCellEdit]
 
 
@@ -57,7 +57,7 @@ class ClaudeCellTranslationPlan(BaseModel):
 
 
 class ClaudeNewParagraphTarget(BaseModel):
-    language: TargetLanguage
+    language: Language
     operation: Literal["insert", "none"] = "insert"
     insertion_index: int = Field(ge=0)
     translated_text: str
@@ -78,7 +78,7 @@ class CellEditOutput(BaseModel):
 
 class CellTranslationOutput(BaseModel):
     column: int = Field(ge=1, le=3)
-    language: TargetLanguage
+    language: Language
     edits: list[CellEditOutput]
 
 

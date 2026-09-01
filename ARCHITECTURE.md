@@ -3,9 +3,9 @@
 ## What this application is
 
 This is a Microsoft Word task-pane add-in. It inspects tracked changes in the
-configured English table cell, asks Claude to propagate semantic changes into
-the German and French cells, and writes the result back through Office.js with
-Track Changes enabled.
+configured English, French, or German reference cell, asks Claude to propagate
+semantic changes into the other two language cells, and writes the result back
+through Office.js with Track Changes enabled.
 
 There is no database. The project does not use SQLite, SQLAlchemy, an ORM,
 migrations, or Redis. The task pane uses browser local storage only for the
@@ -106,7 +106,8 @@ used. The only browser HTTP call is centralized in
 Each request contains:
 
 - `source_column`: logical language column 1, 2, or 3.
-- `source_cell`: every meaningful current paragraph in the English cell.
+- `source_language`: language assigned to the selected reference column.
+- `source_cell`: every meaningful current paragraph in the reference cell.
 - `changed_source_paragraphs`: only paragraphs containing revisions newer than
   the saved baseline, with original text, current text, and revision fragments.
 - `targets`: the complete meaningful-paragraph lists for the two target cells,
@@ -120,10 +121,10 @@ whole document and unrelated table columns are never sent to Claude.
 There are two structured-output operations:
 
 1. New-paragraph planner
-   - Called once per wholly added English paragraph.
+   - Called once per wholly added reference-language paragraph.
    - Receives the full three cells as context and the one new paragraph.
-   - Returns `insert` or `none` independently for German and French, an index,
-     and translated text.
+   - Returns `insert` or `none` independently for both non-reference languages,
+     an index, and translated text.
    - `none` prevents duplicates during baseline recovery.
 2. Existing-paragraph planner
    - Called once for all remaining changed paragraphs in that cell.

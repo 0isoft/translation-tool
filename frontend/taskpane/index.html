@@ -12,16 +12,16 @@
         <header>
             <p class="eyebrow">Tracked-change translation</p>
             <h1>Translation Assistant</h1>
-            <p class="intro">Propagate English tracked changes to the other language cells.</p>
+            <p class="intro">Propagate tracked changes from the reference language to the other language cells.</p>
         </header>
 
         <section class="panel" aria-labelledby="language-heading">
             <h2 id="language-heading">Language columns</h2>
-            <label for="source-column">English source column</label>
+            <label for="source-column">Reference column selection: what language is the primary language in your use case for this Tab file?</label>
             <select id="source-column">
-                <option value="1">Column 1 (second cell)</option>
-                <option value="2">Column 2 (third cell)</option>
-                <option value="3">Column 3 (fourth cell)</option>
+                <option value="1">Column 1 — German</option>
+                <option value="2">Column 2 — French</option>
+                <option value="3">Column 3 — English</option>
             </select>
 
             <div class="language-grid">
@@ -38,7 +38,8 @@
                     <option value="English">English</option><option value="French">French</option><option value="German">German</option>
                 </select>
             </div>
-            <button id="save-source-column" class="secondary-action">Save language columns</button>
+            <button id="save-source-column" class="secondary-action">Save reference and language columns</button>
+            <p id="configuration-status" class="configuration-status" aria-live="polite">Loading saved configuration…</p>
         </section>
 
         <section class="panel actions-panel" aria-labelledby="actions-heading">

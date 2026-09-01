@@ -462,7 +462,7 @@ def get_numeric_warnings(
         if not numeric_change_matches:
             warnings.append(
                 f"Column {translation.column}: the aggregate numeric changes "
-                "do not match the English revisions."
+                "do not match the reference-language revisions."
             )
             continue
 

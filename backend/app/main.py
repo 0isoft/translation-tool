@@ -37,7 +37,7 @@ def manifest():
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:type="TaskPaneApp">
   <Id>39DA7B46-3E25-4FE8-86C0-77B1B75AF0AC</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.1.0</Version>
   <ProviderName>Translation Tool</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Translation Assistant"/>
