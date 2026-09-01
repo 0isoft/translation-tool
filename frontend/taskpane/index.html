@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Translation Assistant</title>
+    <link rel="stylesheet" href="/src/taskpane.css" />
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js" type="text/javascript"></script>
+</head>
+<body>
+    <main class="taskpane-shell">
+        <header>
+            <p class="eyebrow">Tracked-change translation</p>
+            <h1>Translation Assistant</h1>
+            <p class="intro">Propagate English tracked changes to the other language cells.</p>
+        </header>
+
+        <section class="panel" aria-labelledby="language-heading">
+            <h2 id="language-heading">Language columns</h2>
+            <label for="source-column">English source column</label>
+            <select id="source-column">
+                <option value="1">Column 1 (second cell)</option>
+                <option value="2">Column 2 (third cell)</option>
+                <option value="3">Column 3 (fourth cell)</option>
+            </select>
+
+            <div class="language-grid">
+                <label for="column-1-language">Column 1</label>
+                <select id="column-1-language">
+                    <option value="English">English</option><option value="French">French</option><option value="German">German</option>
+                </select>
+                <label for="column-2-language">Column 2</label>
+                <select id="column-2-language">
+                    <option value="English">English</option><option value="French">French</option><option value="German">German</option>
+                </select>
+                <label for="column-3-language">Column 3</label>
+                <select id="column-3-language">
+                    <option value="English">English</option><option value="French">French</option><option value="German">German</option>
+                </select>
+            </div>
+            <button id="save-source-column" class="secondary-action">Save language columns</button>
+        </section>
+
+        <section class="panel actions-panel" aria-labelledby="actions-heading">
+            <h2 id="actions-heading">Translation</h2>
+            <button id="translate-changed-paragraphs" class="primary-action">Translate changed paragraphs</button>
+            <button id="retry-all-revisions" class="secondary-action">Retry all tracked changes</button>
+            <button id="mark-revisions-seen" class="quiet-action">Mark current revisions as seen</button>
+        </section>
+
+        <section class="status-panel" aria-labelledby="status-heading">
+            <h2 id="status-heading">Status</h2>
+            <pre id="output" aria-live="polite">Waiting...</pre>
+        </section>
+    </main>
+    <script type="module" src="/src/taskpane.ts"></script>
+</body>
+</html>

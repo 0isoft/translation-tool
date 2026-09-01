@@ -20,7 +20,7 @@ Word document
 Office.js task pane (frontend)
   inspect -> classify -> call backend -> validate stale state -> write edits
           |
-          | HTTPS /api/* (Vite proxy)
+          | HTTPS /api/* (Nginx reverse proxy)
           v
 FastAPI transport (backend/app/main.py)
           |
@@ -51,6 +51,10 @@ Anthropic adapter -> Claude Messages API
 
 ## Frontend layout
 
+- `index.html`: static browser-facing installation page served at `/`; it has no
+  JavaScript dependency.
+- `taskpane/index.html` and `src/taskpane.css`: compact Word task-pane shell
+  served at `/taskpane/`.
 - `src/taskpane.ts`: UI event wiring and the top-level Word propagation use
   case. It coordinates adapters but does not contain HTTP or mutation-writing
   implementations.
@@ -88,7 +92,7 @@ The frontend uses the native browser `fetch` API. Axios is not installed or
 used. All calls are centralized in `src/adapters/translationApi.ts`.
 
 1. `GET /api/config`
-   - Vite proxies this to backend `GET /config`.
+   - Nginx proxies this to backend `GET /config`.
    - Returns source column and English/French/German assignments.
 2. `PUT /api/config`
    - Replaces the in-memory language configuration.
@@ -171,7 +175,11 @@ both fall back to Claude.
 
 ## Network topology
 
-- Word opens `https://localhost:3000/index.html` from `manifest.xml`.
-- Vite serves the task pane over the Office development certificate.
-- Vite proxies `/api` to `http://backend:8000` inside Docker Compose.
+- Browsers open the installation page at `https://localhost:3000/`.
+- The manifest is downloadable from `https://localhost:3000/manifest.xml`.
+- Word opens `https://localhost:3000/taskpane/` from `manifest.xml`.
+- Nginx serves the production Vite build over the trusted Office development
+  certificate and proxies `/api` to `http://backend:8000` inside Docker
+  Compose.
+- FastAPI is not published on a host port.
 - FastAPI calls Anthropic over HTTPS using `ANTHROPIC_API_KEY`.

@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import devCerts from "office-addin-dev-certs";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 async function getHttpsOptions() {
     const keyPath = process.env.HTTPS_KEY_PATH;
@@ -22,6 +23,14 @@ export default defineConfig(async ({ command }) => {
         : undefined;
 
     return {
+        build: {
+            rollupOptions: {
+                input: {
+                    landing: resolve(__dirname, "index.html"),
+                    taskpane: resolve(__dirname, "taskpane/index.html")
+                }
+            }
+        },
         server: {
             host: "0.0.0.0",
             port: 3000,

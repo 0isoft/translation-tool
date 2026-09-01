@@ -2,69 +2,81 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
+        name="description"
+        content="Install the Translation Assistant add-in for Microsoft Word."
     />
+    <title>Translation Assistant for Word</title>
+    <style>
+        body {
+            max-width: 720px;
+            margin: 48px auto;
+            padding: 0 20px 48px;
+            color: #222;
+            font: 16px/1.6 system-ui, sans-serif;
+        }
 
-    <title>Word Assistant</title>
+        h1, h2 { line-height: 1.2; }
+        h1 { margin-bottom: 8px; }
+        h2 { margin-top: 40px; }
+        ol { padding-left: 24px; }
+        li { margin-bottom: 12px; }
 
-    <script
-        src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"
-        type="text/javascript">
-    </script>
-  <script type="module" crossorigin src="/assets/index-Cl4um0cO.js"></script>
+        .download {
+            display: inline-block;
+            margin: 14px 0;
+            padding: 10px 16px;
+            color: white;
+            background: #245846;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .note {
+            padding: 12px 14px;
+            background: #f2f2f2;
+            border-left: 3px solid #777;
+        }
+    </style>
 </head>
-
 <body>
-    <h2>Word Assistant</h2>
+    <main>
+        <h1>Translation Assistant</h1>
+        <p>
+            A Microsoft Word add-in that propagates tracked changes from an
+            English source cell to the corresponding French and German cells.
+        </p>
 
-    <label for="source-column">English source table column:</label>
-    <select id="source-column">
-      <option value="1">Column 1 (second cell)</option>
-      <option value="2">Column 2 (third cell)</option>
-      <option value="3">Column 3 (fourth cell)</option>
-    </select>
+        <a class="download" href="/manifest.xml" download>
+            Download Word add-in manifest
+        </a>
 
-    <label for="column-1-language">Column 1 language:</label>
-    <select id="column-1-language">
-      <option value="English">English</option>
-      <option value="French">French</option>
-      <option value="German">German</option>
-    </select>
+        <h2>Install in Word</h2>
+        <ol>
+            <li>Download the manifest using the button above.</li>
+            <li>In Word, open <strong>Home → Add-ins → More Add-ins</strong>.</li>
+            <li>
+                Open <strong>My Add-ins</strong>, choose
+                <strong>Upload</strong>, and select the manifest.
+            </li>
+            <li>Open <strong>Translation Assistant</strong> from Word.</li>
+        </ol>
 
-    <label for="column-2-language">Column 2 language:</label>
-    <select id="column-2-language">
-      <option value="English">English</option>
-      <option value="French">French</option>
-      <option value="German">German</option>
-    </select>
+        <p class="note">
+            This local version requires the localhost Office development
+            certificate to be trusted and the Docker services to remain running.
+            Custom add-ins must also be permitted by your Word or Microsoft 365
+            policy.
+        </p>
 
-    <label for="column-3-language">Column 3 language:</label>
-    <select id="column-3-language">
-      <option value="English">English</option>
-      <option value="French">French</option>
-      <option value="German">German</option>
-    </select>
-
-    <button id="save-source-column">
-        Save language columns
-    </button>
-
-    <button id="translate-changed-paragraphs">
-        Translate changed paragraphs
-    </button>
-
-    <button id="mark-revisions-seen">
-        Mark current revisions as seen
-    </button>
-
-    <button id="retry-all-revisions">
-        Retry all tracked changes
-    </button>
-
-    <pre id="output">Waiting...</pre>
-
+        <h2>Document processing</h2>
+        <p>
+            Only affected source paragraphs and the three corresponding language
+            cells are sent to the configured translation service. The complete
+            document is not uploaded.
+        </p>
+    </main>
 </body>
 </html>
