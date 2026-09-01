@@ -31,9 +31,11 @@ The source-column and language assignment are stored in the user's task-pane
 browser storage and are included in each translation request. No mutable
 configuration is kept in a Vercel function instance.
 
-The FastAPI service has a 300-second function duration configured. The task
-pane currently stops waiting after 180 seconds, so especially large rows can
-still time out and should eventually be moved to a queued job architecture.
+With Fluid Compute enabled, Vercel currently defaults Python functions to a
+300-second duration. The task pane stops waiting after 180 seconds, so
+especially large rows can still time out and should eventually be moved to a
+queued job architecture. Function duration can be changed under the project's
+**Settings → Functions** when the selected Vercel plan supports it.
 
 ## Local production-shaped environment
 
