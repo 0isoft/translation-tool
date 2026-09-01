@@ -3,6 +3,38 @@
 Microsoft Word task-pane add-in for propagating English tracked changes into
 French and German table cells.
 
+## Deploy to Vercel
+
+Vercel replaces both the production Docker containers and Nginx. The root
+[`vercel.json`](vercel.json) deploys the Vite frontend and FastAPI backend as
+two Vercel services, routes `/api/*` and `/manifest.xml` to FastAPI, and routes
+the remaining URLs to Vite. Keep the Vercel project's Root Directory set to
+the repository root. Under **Build and Deployment**, set **Framework Preset**
+to **Services**; Vercel will otherwise auto-detect only FastAPI and `/` will
+return its platform `404: NOT_FOUND`. Do not configure a custom build command
+or output folder.
+
+In **Vercel project settings → Environment Variables**, define every variable
+from `backend/.env.example` for the relevant Production and Preview
+environments. In production, set:
+
+```text
+PUBLIC_BASE_URL=https://your-stable-production-domain.example
+```
+
+`PUBLIC_BASE_URL` must be the stable HTTPS origin from which users will install
+and run the add-in—not a short-lived deployment preview URL. Redeploy after
+changing an environment variable. The production manifest is then available
+at `https://your-stable-production-domain.example/manifest.xml`.
+
+The source-column and language assignment are stored in the user's task-pane
+browser storage and are included in each translation request. No mutable
+configuration is kept in a Vercel function instance.
+
+The FastAPI service has a 300-second function duration configured. The task
+pane currently stops waiting after 180 seconds, so especially large rows can
+still time out and should eventually be moved to a queued job architecture.
+
 ## Local production-shaped environment
 
 Prerequisites:
@@ -47,6 +79,6 @@ cd ../
 docker compose exec -T backend python -m unittest discover -s tests -v
 ```
 
-For deployment, replace the localhost URLs and certificate with the production
-domain, move secrets out of `.env.dev`, and add authentication before exposing
-the translation API publicly.
+Before exposing the translation API beyond a controlled pilot, add
+authentication and request/rate limits; possession of the manifest alone is
+not an authorization mechanism.

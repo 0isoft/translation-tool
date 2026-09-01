@@ -8,7 +8,8 @@ the German and French cells, and writes the result back through Office.js with
 Track Changes enabled.
 
 There is no database. The project does not use SQLite, SQLAlchemy, an ORM,
-migrations, Redis, or browser local storage.
+migrations, or Redis. The task pane uses browser local storage only for the
+user's language-column selection.
 
 ## Boundaries
 
@@ -20,7 +21,7 @@ Word document
 Office.js task pane (frontend)
   inspect -> classify -> call backend -> validate stale state -> write edits
           |
-          | HTTPS /api/* (Nginx reverse proxy)
+          | HTTPS /api/* (Nginx locally; Vercel routing in production)
           v
 FastAPI transport (backend/app/main.py)
           |
@@ -34,12 +35,11 @@ Anthropic adapter -> Claude Messages API
 
 ## Backend layout
 
-- `app/main.py`: FastAPI routes, CORS, dependency construction, and mapping
+- `app/main.py`: FastAPI routes, dependency construction, and mapping
   application errors to HTTP errors. It contains no translation algorithm.
 - `app/application/translation_service.py`: the `propagate_cell_changes` use
   case. It classifies changes, combines deterministic and Claude results, and
   returns partial-failure information.
-- `app/application/configuration.py`: process-local language configuration.
 - `app/domain/models.py`: request, response, and Claude structured-output
   contracts.
 - `app/domain/translation_rules.py`: pure paragraph classification, numeric
@@ -63,7 +63,9 @@ Anthropic adapter -> Claude Messages API
 - `src/domain/models.ts`: frontend contracts matching the backend API.
 - `src/domain/textRules.ts`: blank-paragraph, whitespace, whole-addition, and
   minimal-span-diff rules.
-- `src/adapters/translationApi.ts`: every browser `fetch` call.
+- `src/adapters/configurationStore.ts`: per-user language-column preference in
+  task-pane browser storage.
+- `src/adapters/translationApi.ts`: the translation API `fetch` call.
 - `src/adapters/wordRevisionStore.ts`: revision fingerprints and the embedded
   document baseline.
 - `src/adapters/wordMutationWriter.ts`: minimal replacements, paragraph
@@ -75,8 +77,8 @@ Anthropic adapter -> Claude Messages API
 | --- | --- | --- |
 | Document text and tracked revisions | Word DOCX | Saved with the document |
 | Revision baseline | Word document setting `translationTool.revisionBaseline.v1` | Saved with the document and copied with it |
-| Source column and three language assignments | Backend in-memory configuration | Lost/reset on backend restart |
-| Claude API key, model, timeout, retry and language defaults | `backend/.env.dev`, loaded once into `app.settings.Settings` | Container lifetime |
+| Source column and three language assignments | Task-pane browser local storage | Current Word webview/browser profile |
+| Claude API key, model, timeout and retry controls | Environment variables, loaded once into `app.settings.Settings` | Container/function-instance lifetime |
 | Inspected rows, planned mutations, progress counters | Task-pane JavaScript memory | One button invocation |
 
 The baseline is a JSON object containing counts of SHA-256 fingerprints. A
@@ -91,21 +93,13 @@ not accept/reject revisions or directly modify source text.
 ## HTTP calls
 
 The frontend uses the native browser `fetch` API. Axios is not installed or
-used. All calls are centralized in `src/adapters/translationApi.ts`.
+used. The only browser HTTP call is centralized in
+`src/adapters/translationApi.ts`.
 
-1. `GET /api/config`
-   - Nginx proxies this to backend `GET /config`.
-   - Returns source column and English/French/German assignments.
-2. `PUT /api/config`
-   - Replaces the in-memory language configuration.
-   - This is not persisted across backend restarts.
-3. `POST /api/translate-cell-changes`
+1. `POST /api/translate-cell-changes`
    - One request per table row containing newly detected source revisions.
    - Timeout: 180 seconds in the task pane.
    - Header: `X-Request-ID` for log correlation.
-
-`PUT /config/source-column` remains as a backwards-compatible backend route;
-the current frontend does not call it.
 
 ## Translation request contract
 
@@ -154,7 +148,8 @@ both fall back to Claude.
 
 ## Word propagation sequence
 
-1. Load backend configuration.
+1. Load the user's language-column configuration from task-pane browser
+   storage (or use the default: German/French/English, source column 3).
 2. Read table row cell counts.
 3. Choose physical language columns:
    - seven-or-more-cell source tables: physical columns 1/2/3;
@@ -177,6 +172,8 @@ both fall back to Claude.
 
 ## Network topology
 
+### Local Docker environment
+
 - Browsers open the installation page at `https://localhost:3000/`.
 - The manifest is downloadable from `https://localhost:3000/manifest.xml`.
 - Word opens `https://localhost:3000/taskpane/` from `manifest.xml`.
@@ -185,3 +182,15 @@ both fall back to Claude.
   Compose.
 - FastAPI is not published on a host port.
 - FastAPI calls Anthropic over HTTPS using `ANTHROPIC_API_KEY`.
+
+### Vercel production
+
+- `vercel.json` defines a Vite frontend service and a FastAPI backend service.
+- Vercel terminates public HTTPS and serves the custom domain; there is no
+  Nginx container or Docker runtime in this deployment.
+- `/api/*` and the dynamically generated `/manifest.xml` route to FastAPI;
+  all other paths route to the Vite frontend.
+- `PUBLIC_BASE_URL` supplies the stable production HTTPS origin embedded in
+  the manifest's task-pane, icon, and support URLs.
+- FastAPI function instances are disposable. Translation requests are
+  self-contained, and no user configuration relies on process memory.

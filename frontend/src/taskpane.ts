@@ -1,8 +1,8 @@
 import {
     getTranslationConfig,
-    requestCellTranslation,
     saveTranslationConfig
-} from "./adapters/translationApi";
+} from "./adapters/configurationStore";
+import { requestCellTranslation } from "./adapters/translationApi";
 import {
     REVISION_BASELINE_KEY,
     addFingerprint,

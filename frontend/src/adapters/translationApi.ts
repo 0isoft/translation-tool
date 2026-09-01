@@ -1,7 +1,6 @@
 import type {
     TranslateCellChangesRequest,
-    TranslateCellChangesResponse,
-    TranslationConfig
+    TranslateCellChangesResponse
 } from "../domain/models";
 
 
@@ -17,32 +16,6 @@ async function errorDetail(response: Response): Promise<string> {
     } catch {
         return await response.text();
     }
-}
-
-
-export async function getTranslationConfig(): Promise<TranslationConfig> {
-    const response = await fetch("/api/config");
-    if (!response.ok) {
-        throw new Error(
-            `Could not load configuration: ${await errorDetail(response)}`
-        );
-    }
-    return await response.json() as TranslationConfig;
-}
-
-
-export async function saveTranslationConfig(
-    config: TranslationConfig
-): Promise<TranslationConfig> {
-    const response = await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-    });
-    if (!response.ok) {
-        throw new Error(await errorDetail(response));
-    }
-    return await response.json() as TranslationConfig;
 }
 
 

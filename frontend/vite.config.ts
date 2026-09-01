@@ -39,8 +39,7 @@ export default defineConfig(async ({ command }) => {
             proxy: {
                 "/api": {
                     target: process.env.BACKEND_URL ?? "http://localhost:8000",
-                    changeOrigin: true,
-                    rewrite: (path: string) => path.replace(/^\/api/, "")
+                    changeOrigin: true
                 }
             }
         },

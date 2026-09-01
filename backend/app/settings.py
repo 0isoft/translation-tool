@@ -1,8 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import cast
-
-from app.domain.models import Language
+from urllib.parse import urlparse
 
 
 class SettingsError(RuntimeError):
@@ -40,6 +38,7 @@ def _number(name: str) -> float:
 
 @dataclass(frozen=True)
 class Settings:
+    public_base_url: str
     anthropic_api_key: str
     anthropic_model: str
     anthropic_timeout_seconds: float
@@ -47,14 +46,11 @@ class Settings:
     claude_max_attempts: int
     claude_backoff_initial_seconds: float
     claude_backoff_max_seconds: float
-    source_column: int
-    column_1_language: Language
-    column_2_language: Language
-    column_3_language: Language
 
     @classmethod
     def from_environment(cls) -> "Settings":
         settings = cls(
+            public_base_url=_required("PUBLIC_BASE_URL").rstrip("/"),
             anthropic_api_key=_required("ANTHROPIC_API_KEY"),
             anthropic_model=_required("ANTHROPIC_MODEL"),
             anthropic_timeout_seconds=_number(
@@ -68,24 +64,20 @@ class Settings:
             claude_backoff_max_seconds=_number(
                 "CLAUDE_BACKOFF_MAX_SECONDS"
             ),
-            source_column=_integer("SOURCE_COLUMN"),
-            column_1_language=cast(
-                Language,
-                _required("COLUMN_1_LANGUAGE"),
-            ),
-            column_2_language=cast(
-                Language,
-                _required("COLUMN_2_LANGUAGE"),
-            ),
-            column_3_language=cast(
-                Language,
-                _required("COLUMN_3_LANGUAGE"),
-            ),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
+        public_url = urlparse(self.public_base_url)
+        if public_url.scheme != "https" or not public_url.netloc \
+                or public_url.path not in ("", "/") \
+                or public_url.params or public_url.query \
+                or public_url.fragment:
+            raise SettingsError(
+                "PUBLIC_BASE_URL must be an HTTPS origin without a path, "
+                "query, or fragment."
+            )
         if self.anthropic_timeout_seconds <= 0:
             raise SettingsError("ANTHROPIC_TIMEOUT_SECONDS must be positive.")
         if self.anthropic_max_retries < 0:
@@ -100,25 +92,4 @@ class Settings:
             raise SettingsError(
                 "CLAUDE_BACKOFF_MAX_SECONDS cannot be smaller than "
                 "CLAUDE_BACKOFF_INITIAL_SECONDS."
-            )
-        if self.source_column not in (1, 2, 3):
-            raise SettingsError("SOURCE_COLUMN must be 1, 2, or 3.")
-
-        languages = {
-            self.column_1_language,
-            self.column_2_language,
-            self.column_3_language,
-        }
-        if languages != {"English", "French", "German"}:
-            raise SettingsError(
-                "Columns 1-3 must use English, French, and German exactly once."
-            )
-        configured_languages = (
-            self.column_1_language,
-            self.column_2_language,
-            self.column_3_language,
-        )
-        if configured_languages[self.source_column - 1] != "English":
-            raise SettingsError(
-                "The configured source column must be English."
             )

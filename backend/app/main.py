@@ -1,11 +1,7 @@
 import uuid
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
-from app.application.configuration import (
-    ConfigurationError,
-    InMemoryTranslationConfiguration,
-)
 from app.application.translation_service import (
     ApplicationRequestError,
     propagate_cell_changes,
@@ -14,10 +10,8 @@ from app.adapters.anthropic import (
     AnthropicClaudePlanner,
 )
 from app.domain.models import (
-    SourceColumnConfig,
     TranslateCellChangesRequest,
     TranslateCellChangesResponse,
-    TranslationConfig,
 )
 from app.settings import Settings
 
@@ -25,54 +19,60 @@ from app.settings import Settings
 app = FastAPI()
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 settings = Settings.from_environment()
-configuration = InMemoryTranslationConfiguration.from_settings(settings)
 claude_planner = AnthropicClaudePlanner(settings)
 
 
-
-
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok"}
 
 
-def current_config() -> TranslationConfig:
-    return configuration.get()
-
-
-@app.get("/config", response_model=TranslationConfig)
-def get_config():
-    return current_config()
-
-
-@app.put("/config", response_model=TranslationConfig)
-def set_config(config: TranslationConfig):
-    try:
-        return configuration.replace(config)
-    except ConfigurationError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-
-
-@app.put("/config/source-column", response_model=TranslationConfig)
-def set_source_column(config: SourceColumnConfig):
-    try:
-        return configuration.move_source(config.source_column)
-    except ConfigurationError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+@app.get("/manifest.xml", include_in_schema=False)
+def manifest():
+    base_url = settings.public_base_url
+    content = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+    xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="TaskPaneApp">
+  <Id>39DA7B46-3E25-4FE8-86C0-77B1B75AF0AC</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Translation Tool</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Translation Assistant"/>
+  <Description DefaultValue="Propagate tracked changes across English, French, and German table cells."/>
+  <IconUrl DefaultValue="{base_url}/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="{base_url}/assets/icon-64.png"/>
+  <SupportUrl DefaultValue="{base_url}/"/>
+  <Hosts>
+    <Host Name="Document"/>
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.6">
+      <Set Name="WordApi" MinVersion="1.6"/>
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="{base_url}/taskpane/"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+</OfficeApp>
+'''
+    return Response(
+        content=content,
+        media_type="application/xml",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": (
+                'attachment; filename="translation-assistant.xml"'
+            ),
+        },
+    )
 
 
 @app.post(
-    "/translate-cell-changes",
+    "/api/translate-cell-changes",
     response_model=TranslateCellChangesResponse,
 )
 async def translate_cell_changes(
@@ -83,7 +83,6 @@ async def translate_cell_changes(
         return await propagate_cell_changes(
             request=request,
             request_id=x_request_id or str(uuid.uuid4()),
-            configuration=configuration,
             planner=claude_planner,
         )
     except ApplicationRequestError as error:

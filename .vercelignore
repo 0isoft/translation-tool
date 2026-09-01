@@ -1,0 +1,10 @@
+.git
+.vercel
+backend/.env*
+backend/tests
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+Dockerfile
+docker-compose.yml

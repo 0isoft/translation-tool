@@ -4,7 +4,6 @@ import time
 
 from anthropic import APITimeoutError
 
-from app.application.configuration import InMemoryTranslationConfiguration
 from app.domain.models import (
     CellEditOutput,
     CellTranslationOutput,
@@ -37,37 +36,23 @@ class ApplicationRequestError(ValueError):
 async def propagate_cell_changes(
     request: TranslateCellChangesRequest,
     request_id: str,
-    configuration: InMemoryTranslationConfiguration,
     planner: ClaudePlanningPort,
 ) -> TranslateCellChangesResponse:
     started_at = time.monotonic()
 
-    if request.source_column != configuration.source_column:
-        raise ApplicationRequestError(
-            status_code=409,
-            detail=(
-                f"Configured source column is {configuration.source_column}, but the request "
-                f"used column {request.source_column}."
-            ),
-        )
-
-    expected_target_columns = {1, 2, 3} - {configuration.source_column}
+    expected_target_columns = {1, 2, 3} - {request.source_column}
     if {target.column for target in request.targets} != expected_target_columns:
         raise ApplicationRequestError(
             status_code=422,
             detail="Targets must be the two non-source columns.",
         )
 
-    for target in request.targets:
-        expected_language = configuration.language_for(target.column)
-        if target.expected_language != expected_language:
-            raise ApplicationRequestError(
-                status_code=409,
-                detail=(
-                    f"Column {target.column} is configured as "
-                    f"{expected_language}, not {target.expected_language}."
-                ),
-            )
+    if {target.expected_language for target in request.targets} \
+            != {"French", "German"}:
+        raise ApplicationRequestError(
+            status_code=422,
+            detail="Targets must contain French and German exactly once.",
+        )
 
     source_indices = {paragraph.index for paragraph in request.source_cell}
     changed_indices = [
@@ -378,4 +363,3 @@ async def propagate_cell_changes(
             failed_source_paragraph_indices
         ),
     )
-

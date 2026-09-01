@@ -7,17 +7,6 @@ Language = Literal["English", "French", "German"]
 TargetLanguage = Literal["French", "German"]
 
 
-class TranslationConfig(BaseModel):
-    source_column: int = Field(ge=1, le=3)
-    column_1_language: Language
-    column_2_language: Language
-    column_3_language: Language
-
-
-class SourceColumnConfig(BaseModel):
-    source_column: int = Field(ge=1, le=3)
-
-
 class RevisionInput(BaseModel):
     type: Literal["Added", "Deleted", "Formatted", "None"]
     text: str
