@@ -1,3 +1,38 @@
+import {
+    getTranslationConfig,
+    requestCellTranslation,
+    saveTranslationConfig
+} from "./adapters/translationApi";
+import {
+    REVISION_BASELINE_KEY,
+    addFingerprint,
+    currentRevisionCounts as getCurrentRevisionCounts,
+    extractOoxmlParagraphInsertions,
+    parseRevisionBaseline,
+    revisionFingerprint as getRevisionFingerprint,
+    saveRevisionBaseline
+} from "./adapters/wordRevisionStore";
+import {
+    applyTrackedMutations,
+    type InspectedParagraph,
+    type PlannedMutation
+} from "./adapters/wordMutationWriter";
+import type {
+    ChangedSourceParagraphInput,
+    Language,
+    RevisionCounts,
+    RevisionInput,
+    TargetCellInput,
+    TranslateCellChangesResponse
+} from "./domain/models";
+import {
+    getSingleSpanDiff,
+    hasMeaningfulParagraphText,
+    hasSubstantiveRevision,
+    isWholeParagraphAddition,
+    normalizeWhitespace
+} from "./domain/textRules";
+
 const output =
     document.getElementById("output") as HTMLPreElement;
 
@@ -8,6 +43,9 @@ const translateChangedParagraphsButton =
 
 const markRevisionsSeenButton =
     document.getElementById("mark-revisions-seen") as HTMLButtonElement;
+
+const retryAllRevisionsButton =
+    document.getElementById("retry-all-revisions") as HTMLButtonElement;
 
 const sourceColumnSelect =
     document.getElementById("source-column") as HTMLSelectElement;
@@ -21,14 +59,11 @@ const columnLanguageSelects = [1, 2, 3].map((column) =>
     ) as HTMLSelectElement
 );
 
-const REVISION_BASELINE_KEY =
-    "translationTool.revisionBaseline.v1";
-
 // The document's language columns use zero-based table indices 1, 2, and 3.
 // Column 0 and every column after 3 contain unrelated document metadata.
-const LANGUAGE_COLUMN_INDICES = [1, 2, 3] as const;
+const STANDARD_LANGUAGE_COLUMN_INDICES = [1, 2, 3] as const;
+const COMPACT_LANGUAGE_COLUMN_INDICES = [0, 1, 2] as const;
 const INSPECTION_ROW_BATCH_SIZE = 10;
-const TRANSLATION_REQUEST_TIMEOUT_MS = 180_000;
 
 
 Office.onReady((info) => {
@@ -41,12 +76,17 @@ Office.onReady((info) => {
 
     translateChangedParagraphsButton.addEventListener(
         "click",
-        translateChangedTableParagraphs
+        () => void translateChangedTableParagraphs(false)
     );
 
     markRevisionsSeenButton.addEventListener(
         "click",
         markCurrentRevisionsAsSeen
+    );
+
+    retryAllRevisionsButton.addEventListener(
+        "click",
+        () => void translateChangedTableParagraphs(true)
     );
 
     saveSourceColumnButton.addEventListener(
@@ -61,42 +101,6 @@ Office.onReady((info) => {
 
     void loadSourceColumn();
 });
-
-
-type Language = "English" | "French" | "German";
-
-
-type TranslationConfig = {
-    source_column: number;
-    column_1_language: Language;
-    column_2_language: Language;
-    column_3_language: Language;
-};
-
-
-async function getErrorDetail(response: Response): Promise<string> {
-    try {
-        const body = await response.json() as { detail?: unknown };
-        return typeof body.detail === "string"
-            ? body.detail
-            : JSON.stringify(body.detail ?? body);
-    } catch {
-        return await response.text();
-    }
-}
-
-
-async function getTranslationConfig(): Promise<TranslationConfig> {
-    const response = await fetch("/api/config");
-
-    if (!response.ok) {
-        throw new Error(
-            `Could not load configuration: ${await getErrorDetail(response)}`
-        );
-    }
-
-    return await response.json() as TranslationConfig;
-}
 
 
 async function loadSourceColumn(): Promise<void> {
@@ -145,22 +149,12 @@ async function saveSourceColumn(): Promise<void> {
             );
         }
 
-        const response = await fetch("/api/config", {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                source_column: sourceColumn,
-                column_1_language: languages[0],
-                column_2_language: languages[1],
-                column_3_language: languages[2]
-            })
+        await saveTranslationConfig({
+            source_column: sourceColumn,
+            column_1_language: languages[0],
+            column_2_language: languages[1],
+            column_3_language: languages[2]
         });
-
-        if (!response.ok) {
-            throw new Error(await getErrorDetail(response));
-        }
 
         output.textContent =
             `Language columns saved: ${languages.join(" / ")}.`;
@@ -169,48 +163,6 @@ async function saveSourceColumn(): Promise<void> {
         output.textContent = `Error: ${String(error)}`;
     } finally {
         saveSourceColumnButton.disabled = false;
-    }
-}
-
-
-async function requestCellTranslation(
-    request: TranslateCellChangesRequest,
-    requestId: string
-): Promise<TranslateCellChangesResponse> {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(
-        () => controller.abort(),
-        TRANSLATION_REQUEST_TIMEOUT_MS
-    );
-
-    try {
-        const response = await fetch("/api/translate-cell-changes", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Request-ID": requestId
-            },
-            body: JSON.stringify(request),
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            throw new Error(
-                `Translation failed: ${await getErrorDetail(response)}`
-            );
-        }
-
-        return await response.json() as TranslateCellChangesResponse;
-    } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-            throw new Error(
-                `Translation request ${requestId} timed out after 180 seconds.`
-            );
-        }
-
-        throw error;
-    } finally {
-        window.clearTimeout(timeout);
     }
 }
 
@@ -236,206 +188,10 @@ type PropagationResult = {
     structuralSources: number;
     baselineCreated: boolean;
     baselineDeferred: boolean;
+    knownSourceRevisions: number;
+    newSourceRevisions: number;
+    diagnosticLines: string[];
 };
-
-
-type InspectedParagraph = {
-    paragraph: Word.Paragraph;
-    trackedChanges: Word.TrackedChangeCollection;
-    currentText: OfficeExtension.ClientResult<string>;
-    originalText: OfficeExtension.ClientResult<string>;
-    originalPosition?: number;
-    currentPosition?: number;
-    newRevisions: RevisionInput[];
-    newRevisionFingerprints: string[];
-};
-
-
-type RevisionInput = {
-    type: "Added" | "Deleted" | "Formatted" | "None";
-    text: string;
-};
-
-
-type CellParagraphInput = {
-    index: number;
-    text: string;
-};
-
-
-type ChangedSourceParagraphInput = {
-    index: number;
-    original_text: string;
-    current_text: string;
-    changes: RevisionInput[];
-};
-
-
-type TargetCellInput = {
-    column: number;
-    expected_language: "French" | "German";
-    paragraphs: CellParagraphInput[];
-};
-
-
-type TranslateCellChangesRequest = {
-    source_column: number;
-    source_cell: CellParagraphInput[];
-    changed_source_paragraphs: ChangedSourceParagraphInput[];
-    targets: TargetCellInput[];
-};
-
-
-type CellEditOutput = {
-    source_paragraph_indices: number[];
-    operation: "replace" | "insert" | "none";
-    target_paragraph_index: number;
-    original_text: string;
-    translated_text: string;
-};
-
-
-type CellTranslationOutput = {
-    column: number;
-    language: "French" | "German";
-    edits: CellEditOutput[];
-};
-
-
-type TranslateCellChangesResponse = {
-    translations: CellTranslationOutput[];
-    numeric_consistent: boolean;
-    numeric_warnings: string[];
-    partial_errors: string[];
-    failed_source_paragraph_indices: number[];
-};
-
-
-type ReplaceMutation = {
-    operation: "replace";
-    paragraph: Word.Paragraph;
-    originalText: string;
-    text: string;
-};
-
-
-type InsertMutation = {
-    operation: "insert";
-    cellParagraphs: InspectedParagraph[];
-    meaningfulParagraphs: InspectedParagraph[];
-    insertionIndex: number;
-    text: string;
-};
-
-
-type PlannedMutation = ReplaceMutation | InsertMutation;
-
-
-type SearchCandidate = {
-    ranges: Word.RangeCollection;
-    expectedText: string;
-    insertLocation: Word.InsertLocation;
-};
-
-
-type PreparedReplacement = {
-    replacementText: string;
-    candidates: SearchCandidate[];
-};
-
-
-type RevisionCounts = Record<string, number>;
-
-
-type RevisionBaseline = {
-    version: 1;
-    fingerprints: RevisionCounts;
-};
-
-
-function hasMeaningfulParagraphText(value: string): boolean {
-    // Word can expose paragraph, line, and table-cell markers as characters.
-    // None of them make a blank visual line a logical paragraph for matching.
-    return value.replace(/[\s\u0007]/gu, "").length > 0;
-}
-
-
-function normalizeWhitespace(value: string): string {
-    return value.replace(/[\s\u0007]+/gu, " ").trim();
-}
-
-
-function hasSubstantiveNewRevision(
-    revisions: RevisionInput[]
-): boolean {
-    return revisions.some((revision) =>
-        (revision.type === "Added" || revision.type === "Deleted")
-        && revision.text.replace(/[\s\u0007]+/gu, "").length > 0
-    );
-}
-
-
-function isWholeParagraphAddition(
-    revisions: RevisionInput[],
-    currentText: string
-): boolean {
-    const normalizedCurrent = normalizeWhitespace(currentText);
-    if (!normalizedCurrent) {
-        return false;
-    }
-
-    const addedText = revisions
-        .filter((revision) => revision.type === "Added")
-        .map((revision) => revision.text)
-        .join("");
-    const hasSubstantiveDeletion = revisions.some((revision) =>
-        revision.type === "Deleted"
-        && revision.text.replace(/[\s\u0007]+/gu, "").length > 0
-    );
-
-    return !hasSubstantiveDeletion
-        && normalizeWhitespace(addedText) === normalizedCurrent;
-}
-
-
-function getSingleSpanDiff(before: string, after: string): {
-    prefixLength: number;
-    suffixLength: number;
-    removedText: string;
-    insertedText: string;
-} {
-    let prefixLength = 0;
-    const commonLength = Math.min(before.length, after.length);
-
-    while (prefixLength < commonLength
-        && before[prefixLength] === after[prefixLength]) {
-        prefixLength += 1;
-    }
-
-    let suffixLength = 0;
-    const remainingBefore = before.length - prefixLength;
-    const remainingAfter = after.length - prefixLength;
-    const maximumSuffix = Math.min(remainingBefore, remainingAfter);
-
-    while (suffixLength < maximumSuffix
-        && before[before.length - suffixLength - 1]
-            === after[after.length - suffixLength - 1]) {
-        suffixLength += 1;
-    }
-
-    return {
-        prefixLength,
-        suffixLength,
-        removedText: before.slice(
-            prefixLength,
-            before.length - suffixLength
-        ),
-        insertedText: after.slice(
-            prefixLength,
-            after.length - suffixLength
-        )
-    };
-}
 
 
 function formatElapsed(startedAt: number): string {
@@ -488,93 +244,6 @@ async function syncWithProgress(
 }
 
 
-function parseRevisionBaseline(value: unknown): RevisionCounts {
-    if (typeof value !== "string") {
-        return {};
-    }
-
-    try {
-        const parsed = JSON.parse(value) as Partial<RevisionBaseline>;
-
-        if (parsed.version !== 1
-            || !parsed.fingerprints
-            || typeof parsed.fingerprints !== "object") {
-            return {};
-        }
-
-        return parsed.fingerprints;
-    } catch {
-        return {};
-    }
-}
-
-
-async function sha256(value: string): Promise<string> {
-    const bytes = new TextEncoder().encode(value);
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-
-    return Array.from(new Uint8Array(digest))
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
-}
-
-
-async function getRevisionFingerprint(
-    change: Word.TrackedChange
-): Promise<string> {
-    return sha256([
-        change.author,
-        change.date.toISOString(),
-        change.type,
-        change.text
-    ].join("\u0000"));
-}
-
-
-function addFingerprint(
-    counts: RevisionCounts,
-    fingerprint: string
-): void {
-    counts[fingerprint] = (counts[fingerprint] ?? 0) + 1;
-}
-
-
-async function getCurrentRevisionCounts(
-    context: Word.RequestContext
-): Promise<RevisionCounts> {
-    const revisions = context.document.body.getTrackedChanges();
-    revisions.load("items/author,items/date,items/text,items/type");
-    await context.sync();
-
-    const fingerprints = await Promise.all(
-        revisions.items.map(getRevisionFingerprint)
-    );
-    const counts: RevisionCounts = {};
-
-    for (const fingerprint of fingerprints) {
-        addFingerprint(counts, fingerprint);
-    }
-
-    return counts;
-}
-
-
-function saveRevisionBaseline(
-    context: Word.RequestContext,
-    fingerprints: RevisionCounts
-): void {
-    const baseline: RevisionBaseline = {
-        version: 1,
-        fingerprints
-    };
-
-    context.document.settings.add(
-        REVISION_BASELINE_KEY,
-        JSON.stringify(baseline)
-    );
-}
-
-
 async function markCurrentRevisionsAsSeen(): Promise<void> {
     markRevisionsSeenButton.disabled = true;
     translateChangedParagraphsButton.disabled = true;
@@ -603,7 +272,9 @@ async function markCurrentRevisionsAsSeen(): Promise<void> {
 }
 
 
-async function translateChangedTableParagraphs(): Promise<void> {
+async function translateChangedTableParagraphs(
+    forceAllRevisions = false
+): Promise<void> {
     if (!Office.context.requirements.isSetSupported("WordApi", "1.6")) {
         output.textContent =
             "This version of Word does not support tracked-change inspection (WordApi 1.6).";
@@ -611,6 +282,7 @@ async function translateChangedTableParagraphs(): Promise<void> {
     }
 
     translateChangedParagraphsButton.disabled = true;
+    retryAllRevisionsButton.disabled = true;
     saveSourceColumnButton.disabled = true;
     const startedAt = performance.now();
     await showProgress(startedAt, "Loading translation configuration...");
@@ -643,7 +315,8 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 "Finding document tables and the saved revision baseline..."
             );
 
-            const baselineCreated = baselineSetting.isNullObject;
+            const baselineCreated = forceAllRevisions
+                || baselineSetting.isNullObject;
             const savedRevisionCounts = baselineCreated
                 ? {}
                 : parseRevisionBaseline(baselineSetting.value);
@@ -651,6 +324,7 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 ...savedRevisionCounts
             };
             const deferredRevisionCounts: RevisionCounts = {};
+            const syntheticRevisionCounts: RevisionCounts = {};
 
             const deferParagraphRevisions = (
                 paragraph: InspectedParagraph
@@ -692,24 +366,36 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 unequalParagraphCountRows: 0,
                 structuralSources: 0,
                 baselineCreated,
-                baselineDeferred: false
+                baselineDeferred: false,
+                knownSourceRevisions: 0,
+                newSourceRevisions: 0,
+                diagnosticLines: []
             };
 
-            const eligibleRows: Word.TableRow[] = [];
+            const eligibleRows: Array<{
+                row: Word.TableRow;
+                languageColumnIndices: readonly [number, number, number];
+            }> = [];
 
             for (const rows of tableRows) {
                 for (const row of rows.items) {
-                    if (row.cellCount <= LANGUAGE_COLUMN_INDICES[2]) {
+                    if (row.cellCount < 3) {
                         result.invalidRows += 1;
                         continue;
                     }
 
-                    eligibleRows.push(row);
+                    eligibleRows.push({
+                        row,
+                        languageColumnIndices: row.cellCount >= 7
+                            ? STANDARD_LANGUAGE_COLUMN_INDICES
+                            : COMPACT_LANGUAGE_COLUMN_INDICES
+                    });
                 }
             }
 
             result.eligibleRows = eligibleRows.length;
             const inspectedRows: InspectedParagraph[][][] = [];
+            const cellTrackedChangeCountRows: number[][] = [];
             let inspectedParagraphCount = 0;
 
             for (let batchStart = 0;
@@ -722,8 +408,8 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 const rowBatch = eligibleRows.slice(batchStart, batchEnd);
                 const batchLabel = `Rows ${batchStart + 1}-${batchEnd} of ${eligibleRows.length}`;
 
-                for (const row of rowBatch) {
-                    row.cells.load("items");
+                for (const candidate of rowBatch) {
+                    candidate.row.cells.load("items");
                 }
 
                 await syncWithProgress(
@@ -733,12 +419,17 @@ async function translateChangedTableParagraphs(): Promise<void> {
                     [batchLabel, `Paragraphs inspected: ${inspectedParagraphCount}`]
                 );
 
-                const rowParagraphCollections = rowBatch.map((row) => {
-                    const collections = LANGUAGE_COLUMN_INDICES.map((column) => {
-                        const cell = row.cells.items[column];
+                const rowParagraphCollections = rowBatch.map((candidate) => {
+                    const collections = candidate.languageColumnIndices.map((column) => {
+                        const cell = candidate.row.cells.items[column];
                         const paragraphs = cell.body.paragraphs;
+                        const trackedChanges = cell.body.getTrackedChanges();
+                        const ooxml = cell.body.getOoxml();
                         paragraphs.load("items");
-                        return paragraphs;
+                        trackedChanges.load(
+                            "items/author,items/date,items/text,items/type"
+                        );
+                        return { paragraphs, trackedChanges, ooxml };
                     });
 
                     return collections;
@@ -752,8 +443,8 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 );
 
                 const inspectedBatch = rowParagraphCollections.map(
-                    (collections) => collections.map((collection) =>
-                        collection.items.map((paragraph): InspectedParagraph => {
+                    (collections) => collections.map(({ paragraphs }) =>
+                        paragraphs.items.map((paragraph): InspectedParagraph => {
                             const trackedChanges = paragraph.getTrackedChanges();
                             const currentText = paragraph.getReviewedText(
                                 Word.ChangeTrackingVersion.current
@@ -775,6 +466,16 @@ async function translateChangedTableParagraphs(): Promise<void> {
                                 newRevisionFingerprints: []
                             };
                         })
+                    )
+                );
+                const cellTrackedChangesBatch = rowParagraphCollections.map(
+                    (collections) => collections.map(
+                        ({ trackedChanges }) => trackedChanges
+                    )
+                );
+                const cellOoxmlBatch = rowParagraphCollections.map(
+                    (collections) => collections.map(({ ooxml }) =>
+                        ooxml.value
                     )
                 );
 
@@ -799,7 +500,13 @@ async function translateChangedTableParagraphs(): Promise<void> {
 
                 inspectedParagraphCount += batchParagraphCount;
 
-                for (const cells of inspectedBatch) {
+                for (let batchRowIndex = 0;
+                    batchRowIndex < inspectedBatch.length;
+                    batchRowIndex += 1) {
+                    const cells = inspectedBatch[batchRowIndex];
+                    const cellTrackedChanges =
+                        cellTrackedChangesBatch[batchRowIndex];
+                    const cellOoxml = cellOoxmlBatch[batchRowIndex];
                     const meaningfulParagraphCounts = cells.map((cell) =>
                         cell.filter((paragraph) => hasMeaningfulParagraphText(
                             paragraph.originalText.value
@@ -862,9 +569,138 @@ async function translateChangedTableParagraphs(): Promise<void> {
                             }
                         }
                     }
+
+                    // Word for Mac can omit a whole-paragraph insertion from
+                    // Paragraph.getTrackedChanges(), even though the same
+                    // revision is returned by the containing cell body. Add
+                    // only those cell-level revisions not already observed at
+                    // paragraph scope, then map them by their complete text.
+                    for (let cellIndex = 0;
+                        cellIndex < cells.length;
+                        cellIndex += 1) {
+                        const paragraphFingerprintCounts: RevisionCounts = {};
+                        for (const inspected of cells[cellIndex]) {
+                            const fingerprints = await Promise.all(
+                                inspected.trackedChanges.items.map(
+                                    getRevisionFingerprint
+                                )
+                            );
+                            for (const fingerprint of fingerprints) {
+                                addFingerprint(
+                                    paragraphFingerprintCounts,
+                                    fingerprint
+                                );
+                            }
+                        }
+
+                        for (const revision of cellTrackedChanges[cellIndex]
+                            .items) {
+                            const fingerprint = await getRevisionFingerprint(
+                                revision
+                            );
+                            const paragraphCount =
+                                paragraphFingerprintCounts[fingerprint] ?? 0;
+                            if (paragraphCount > 0) {
+                                paragraphFingerprintCounts[fingerprint] =
+                                    paragraphCount - 1;
+                                continue;
+                            }
+
+                            const knownCount =
+                                remainingKnownRevisions[fingerprint] ?? 0;
+                            if (knownCount > 0) {
+                                remainingKnownRevisions[fingerprint] =
+                                    knownCount - 1;
+                                continue;
+                            }
+
+                            const revisionText = normalizeWhitespace(
+                                revision.text
+                            );
+                            if (!revisionText) {
+                                continue;
+                            }
+                            const candidateText = revision.type === "Deleted"
+                                ? (paragraph: InspectedParagraph) =>
+                                    paragraph.originalText.value
+                                : (paragraph: InspectedParagraph) =>
+                                    paragraph.currentText.value;
+                            const matchingParagraphs = cells[cellIndex].filter(
+                                (paragraph) => normalizeWhitespace(
+                                    candidateText(paragraph)
+                                ) === revisionText
+                            );
+                            if (matchingParagraphs.length !== 1) {
+                                continue;
+                            }
+
+                            matchingParagraphs[0].newRevisions.push({
+                                type: revision.type,
+                                text: revision.text
+                            });
+                            matchingParagraphs[0]
+                                .newRevisionFingerprints.push(fingerprint);
+                        }
+
+                        for (const insertion of
+                            extractOoxmlParagraphInsertions(
+                                cellOoxml[cellIndex]
+                            )) {
+                            addFingerprint(
+                                syntheticRevisionCounts,
+                                insertion.fingerprint
+                            );
+                            const knownCount = remainingKnownRevisions[
+                                insertion.fingerprint
+                            ] ?? 0;
+                            if (knownCount > 0) {
+                                remainingKnownRevisions[
+                                    insertion.fingerprint
+                                ] = knownCount - 1;
+                                continue;
+                            }
+
+                            const insertionText = normalizeWhitespace(
+                                insertion.text
+                            );
+                            const matchingParagraphs = cells[cellIndex].filter(
+                                (paragraph) => normalizeWhitespace(
+                                    paragraph.currentText.value
+                                ) === insertionText
+                            );
+                            if (matchingParagraphs.length !== 1) {
+                                continue;
+                            }
+                            const matchingParagraph = matchingParagraphs[0];
+                            const alreadyObserved =
+                                matchingParagraph.newRevisions.some(
+                                    (revision) => revision.type === "Added"
+                                        && normalizeWhitespace(revision.text)
+                                            === insertionText
+                                );
+                            if (alreadyObserved) {
+                                continue;
+                            }
+
+                            matchingParagraph.newRevisions.push({
+                                type: "Added",
+                                text: insertion.text
+                            });
+                            matchingParagraph.newRevisionFingerprints.push(
+                                insertion.fingerprint
+                            );
+                        }
+                    }
                 }
 
                 inspectedRows.push(...inspectedBatch);
+                cellTrackedChangeCountRows.push(
+                    ...cellTrackedChangesBatch.map((collections) =>
+                        collections.map((collection) =>
+                            collection.items.length
+                        )
+                    )
+                );
             }
 
             await showProgress(
@@ -878,7 +714,10 @@ async function translateChangedTableParagraphs(): Promise<void> {
 
             const mutations: PlannedMutation[] = [];
 
-            for (const cells of inspectedRows) {
+            for (let inspectedRowIndex = 0;
+                inspectedRowIndex < inspectedRows.length;
+                inspectedRowIndex += 1) {
+                const cells = inspectedRows[inspectedRowIndex];
                 const currentParagraphs = cells.map((cell) =>
                     cell.filter((paragraph) =>
                         paragraph.currentPosition !== undefined
@@ -888,6 +727,21 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 );
                 const sourceParagraphs = currentParagraphs[sourceCellIndex];
                 const changedSourceParagraphs: ChangedSourceParagraphInput[] = [];
+                const sourceTrackedRevisionCount =
+                    cellTrackedChangeCountRows[inspectedRowIndex][
+                        sourceCellIndex
+                    ];
+                const sourceNewRevisionCount = cells[sourceCellIndex]
+                    .reduce(
+                        (total, paragraph) => total
+                            + paragraph.newRevisions.length,
+                        0
+                    );
+                result.knownSourceRevisions += Math.max(
+                    0,
+                    sourceTrackedRevisionCount - sourceNewRevisionCount
+                );
+                result.newSourceRevisions += sourceNewRevisionCount;
 
                 for (const source of cells[sourceCellIndex]) {
                     if (source.newRevisions.length === 0) {
@@ -903,7 +757,7 @@ async function translateChangedTableParagraphs(): Promise<void> {
                         source.currentText.value
                     );
                     if (!isNewParagraph
-                        && (!hasSubstantiveNewRevision(source.newRevisions)
+                        && (!hasSubstantiveRevision(source.newRevisions)
                             || normalizeWhitespace(
                                 source.originalText.value
                             ) === normalizeWhitespace(
@@ -931,6 +785,16 @@ async function translateChangedTableParagraphs(): Promise<void> {
                         changes: source.newRevisions
                     });
                 }
+
+                result.diagnosticLines.push(
+                    `Row ${inspectedRowIndex + 1}: paragraphs `
+                    + currentParagraphs.map((paragraphs) =>
+                        paragraphs.length
+                    ).join("/")
+                    + `; source tracked ${sourceTrackedRevisionCount}`
+                    + `; new after baseline ${sourceNewRevisionCount}`
+                    + `; eligible changes ${changedSourceParagraphs.length}.`
+                );
 
                 if (changedSourceParagraphs.length === 0) {
                     continue;
@@ -1092,213 +956,22 @@ async function translateChangedTableParagraphs(): Promise<void> {
                 }
             }
 
-            const preparedReplacements = new Map<
-                Word.Paragraph,
-                PreparedReplacement
-            >();
-            let narrowSearchCount = 0;
-
-            for (const mutation of mutations) {
-                if (mutation.operation !== "replace") {
-                    continue;
-                }
-
-                const diff = getSingleSpanDiff(
-                    mutation.originalText,
-                    mutation.text
-                );
-                const candidates: SearchCandidate[] = [];
-
-                // No common context means Claude effectively changed the
-                // entire paragraph, so a whole-paragraph tracked replacement
-                // accurately represents the result.
-                if (diff.prefixLength === 0 && diff.suffixLength === 0) {
-                    continue;
-                }
-
-                if (diff.removedText.length > 0
-                    && diff.removedText.length <= 200) {
-                    const ranges = mutation.paragraph.search(
-                        diff.removedText,
-                        {
-                            ignorePunct: false,
-                            ignoreSpace: false,
-                            matchCase: true,
-                            matchWholeWord: false,
-                            matchWildcards: false
-                        }
-                    );
-                    ranges.load("items/text");
-                    candidates.push({
-                        ranges,
-                        expectedText: diff.removedText,
-                        insertLocation: Word.InsertLocation.replace
-                    });
-                } else if (diff.removedText.length === 0) {
-                    if (diff.suffixLength > 0) {
-                        const suffixAnchor = mutation.originalText.slice(
-                            diff.prefixLength,
-                            diff.prefixLength + Math.min(
-                                diff.suffixLength,
-                                80
-                            )
-                        );
-                        const ranges = mutation.paragraph.search(
-                            suffixAnchor,
-                            {
-                                ignorePunct: false,
-                                ignoreSpace: false,
-                                matchCase: true,
-                                matchWholeWord: false,
-                                matchWildcards: false
-                            }
-                        );
-                        ranges.load("items/text");
-                        candidates.push({
-                            ranges,
-                            expectedText: suffixAnchor,
-                            insertLocation: Word.InsertLocation.before
-                        });
-                    }
-
-                    if (diff.prefixLength > 0) {
-                        const prefixAnchor = mutation.originalText.slice(
-                            Math.max(0, diff.prefixLength - 80),
-                            diff.prefixLength
-                        );
-                        const ranges = mutation.paragraph.search(
-                            prefixAnchor,
-                            {
-                                ignorePunct: false,
-                                ignoreSpace: false,
-                                matchCase: true,
-                                matchWholeWord: false,
-                                matchWildcards: false
-                            }
-                        );
-                        ranges.load("items/text");
-                        candidates.push({
-                            ranges,
-                            expectedText: prefixAnchor,
-                            insertLocation: Word.InsertLocation.after
-                        });
-                    }
-                }
-
-                if (candidates.length > 0) {
-                    narrowSearchCount += candidates.length;
-                    preparedReplacements.set(mutation.paragraph, {
-                        replacementText: diff.insertedText,
-                        candidates
-                    });
-                }
-            }
-
-            if (narrowSearchCount > 0) {
-                await syncWithProgress(
+            const writeResult = await applyTrackedMutations(
+                context,
+                wordDocument,
+                mutations,
+                (stage, details = []) => syncWithProgress(
                     context,
                     startedAt,
-                    "Locating minimal changed spans inside target paragraphs...",
-                    [`Candidate ranges: ${narrowSearchCount}`]
-                );
-            }
-
-            const originalTrackingMode = wordDocument.changeTrackingMode;
-            const mustRestoreTrackingMode =
-                originalTrackingMode === Word.ChangeTrackingMode.off;
-
-            if (mutations.length > 0 && mustRestoreTrackingMode) {
-                wordDocument.changeTrackingMode =
-                    Word.ChangeTrackingMode.trackAll;
-                await syncWithProgress(
-                    context,
-                    startedAt,
-                    "Enabling Track Changes for translated replacements..."
-                );
-            }
-
-            try {
-                // Work backwards so an earlier insertion cannot move a later
-                // paragraph before all mutations have been queued.
-                for (const mutation of mutations.reverse()) {
-                    if (mutation.operation === "replace") {
-                        const prepared = preparedReplacements.get(
-                            mutation.paragraph
-                        );
-                        const exactCandidate = prepared?.candidates.find(
-                            (candidate) => candidate.ranges.items.filter(
-                                (range) => range.text
-                                    === candidate.expectedText
-                            ).length === 1
-                        );
-
-                        if (prepared && exactCandidate) {
-                            const exactRange = exactCandidate.ranges.items.find(
-                                (range) => range.text
-                                    === exactCandidate.expectedText
-                            )!;
-                            exactRange.insertText(
-                                prepared.replacementText,
-                                exactCandidate.insertLocation
-                            );
-                            result.minimallyTrackedTargets += 1;
-                        } else {
-                            mutation.paragraph.insertText(
-                                mutation.text,
-                                Word.InsertLocation.replace
-                            );
-                            result.fullParagraphFallbacks += 1;
-                        }
-                        continue;
-                    }
-
-                    if (mutation.meaningfulParagraphs.length === 0) {
-                        const emptyParagraph = mutation.cellParagraphs[0];
-                        if (!emptyParagraph) {
-                            throw new Error(
-                                "Word returned a table cell without a paragraph."
-                            );
-                        }
-
-                        emptyParagraph.paragraph.insertText(
-                            mutation.text,
-                            Word.InsertLocation.replace
-                        );
-                    } else if (mutation.insertionIndex
-                        < mutation.meaningfulParagraphs.length) {
-                        mutation.meaningfulParagraphs[
-                            mutation.insertionIndex
-                        ].paragraph.insertParagraph(
-                            mutation.text,
-                            Word.InsertLocation.before
-                        );
-                    } else {
-                        mutation.meaningfulParagraphs[
-                            mutation.meaningfulParagraphs.length - 1
-                        ].paragraph.insertParagraph(
-                            mutation.text,
-                            Word.InsertLocation.after
-                        );
-                    }
-                }
-
-                await syncWithProgress(
-                    context,
-                    startedAt,
-                    "Writing translated paragraphs...",
-                    [`Target paragraph edits: ${mutations.length}`]
-                );
-                result.updatedTargets = mutations.length;
-            } finally {
-                if (mutations.length > 0 && mustRestoreTrackingMode) {
-                    wordDocument.changeTrackingMode = originalTrackingMode;
-                    await syncWithProgress(
-                        context,
-                        startedAt,
-                        "Restoring the document's Track Changes setting..."
-                    );
-                }
-            }
+                    stage,
+                    details
+                )
+            );
+            result.updatedTargets = writeResult.updatedTargets;
+            result.minimallyTrackedTargets =
+                writeResult.minimallyTrackedTargets;
+            result.fullParagraphFallbacks =
+                writeResult.fullParagraphFallbacks;
 
             result.baselineDeferred = Object.keys(
                 deferredRevisionCounts
@@ -1306,6 +979,11 @@ async function translateChangedTableParagraphs(): Promise<void> {
 
             const currentRevisionCounts =
                 await getCurrentRevisionCounts(context);
+            for (const [fingerprint, count] of Object.entries(
+                syntheticRevisionCounts
+            )) {
+                currentRevisionCounts[fingerprint] = count;
+            }
             for (const [fingerprint, deferredCount] of Object.entries(
                 deferredRevisionCounts
             )) {
@@ -1346,13 +1024,18 @@ async function translateChangedTableParagraphs(): Promise<void> {
             `Partially completed cell plans: ${result.partialCellPlans}`,
             `Rows missing language columns 1-3: ${result.invalidRows}`,
             `Rows with unequal paragraph counts (processed): ${result.unequalParagraphCountRows}`,
+            `Source revisions already in baseline: ${result.knownSourceRevisions}`,
+            `Source revisions considered in this run: ${result.newSourceRevisions}`,
             `Fully deleted source paragraphs skipped: ${result.structuralSources}`,
             result.baselineDeferred
                 ? "Completed revisions recorded; failed/skipped revisions retained for retry."
                 : "Revision baseline advanced through this run.",
             result.baselineCreated
-                ? "No prior baseline: all existing revisions were treated as new."
+                ? forceAllRevisions
+                    ? "Forced retry: saved baseline was ignored for this run."
+                    : "No prior baseline: all existing revisions were treated as new."
                 : "Only revisions newer than the saved baseline were treated as sources.",
+            ...result.diagnosticLines.slice(0, 10),
             ...result.translationErrors.slice(0, 3).map(
                 (error, index) => `Failed plan ${index + 1}: ${error}`
             ),
@@ -1365,6 +1048,7 @@ async function translateChangedTableParagraphs(): Promise<void> {
         console.error(error);
         output.textContent = `Error: ${String(error)}`;
     } finally {
+        retryAllRevisionsButton.disabled = false;
         translateChangedParagraphsButton.disabled = false;
         saveSourceColumnButton.disabled = false;
     }

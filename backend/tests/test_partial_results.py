@@ -3,7 +3,7 @@ import unittest
 import os
 from unittest.mock import patch
 
-from app.main import (
+from app.domain.models import (
     CellParagraphInput,
     ChangedSourceParagraphInput,
     ClaudeNewParagraphPlan,
@@ -11,8 +11,8 @@ from app.main import (
     RevisionInput,
     TargetCellInput,
     TranslateCellChangesRequest,
-    translate_cell_changes,
 )
+from app.main import translate_cell_changes
 
 
 class FakeMessages:
@@ -85,7 +85,7 @@ class PartialResultTests(unittest.IsolatedAsyncioTestCase):
         fake_client = FakeClient()
 
         with patch.dict(os.environ, {"CLAUDE_MAX_ATTEMPTS": "1"}), patch(
-            "app.main.get_anthropic_client",
+            "app.adapters.anthropic.get_anthropic_client",
             return_value=fake_client,
         ):
             response = await translate_cell_changes(

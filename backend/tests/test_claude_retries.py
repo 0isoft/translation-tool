@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.main import parse_claude_with_backoff
+from app.adapters.anthropic import parse_claude_with_backoff
 
 
 class FlakyMessages:
@@ -35,13 +35,13 @@ class ClaudeRetryTests(unittest.IsolatedAsyncioTestCase):
                 "CLAUDE_BACKOFF_MAX_SECONDS": "8",
             },
         ), patch(
-            "app.main.get_anthropic_client",
+            "app.adapters.anthropic.get_anthropic_client",
             return_value=client,
         ), patch(
-            "app.main.random.uniform",
+            "app.adapters.anthropic.random.uniform",
             return_value=0,
         ), patch(
-            "app.main.asyncio.sleep",
+            "app.adapters.anthropic.asyncio.sleep",
             sleep,
         ):
             result = await parse_claude_with_backoff(

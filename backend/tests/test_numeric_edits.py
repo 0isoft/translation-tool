@@ -1,12 +1,12 @@
 import unittest
 
-from app.main import (
+from app.domain.models import (
     CellParagraphInput,
     ChangedSourceParagraphInput,
     RevisionInput,
     TargetCellInput,
-    deterministic_numeric_edit,
 )
+from app.domain.translation_rules import deterministic_numeric_edit
 
 
 def numeric_change(

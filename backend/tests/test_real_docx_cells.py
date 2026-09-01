@@ -3,8 +3,9 @@ import os
 import types
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
-from app.main import (
+from app.domain.models import (
     CellParagraphInput,
     ChangedSourceParagraphInput,
     ClaudeCellEdit,
@@ -14,16 +15,19 @@ from app.main import (
     RevisionInput,
     TargetCellInput,
     TranslateCellChangesRequest,
+)
+from app.domain.translation_rules import (
+    PlanValidationError,
     deterministic_numeric_edit,
     is_effectively_new_paragraph,
-    translate_cell_changes,
     validate_target_plan,
 )
-from fastapi import HTTPException
+from app.main import translate_cell_changes
 from tests.docx_fixture import DocxParagraph, TrackedTableFixture
 
 
 FIXTURE_PATH = Path(__file__).with_name("Tab_file_for_testing.docx")
+ISOLATED_FIXTURE_PATH = Path(__file__).with_name("isolated_issue.docx")
 
 
 def changed_input(paragraph: DocxParagraph) -> ChangedSourceParagraphInput:
@@ -117,6 +121,31 @@ class PartiallyFailingNewParagraphClient:
         self.messages = PartiallyFailingNewParagraphMessages()
 
 
+class DuplicateAwareMessages:
+    async def parse(self, **_kwargs):
+        return types.SimpleNamespace(
+            parsed_output=ClaudeNewParagraphPlan(
+                target_1=ClaudeNewParagraphTarget(
+                    language="German",
+                    operation="none",
+                    insertion_index=19,
+                    translated_text="",
+                ),
+                target_2=ClaudeNewParagraphTarget(
+                    language="French",
+                    operation="insert",
+                    insertion_index=20,
+                    translated_text="Nouvelle décision.",
+                ),
+            )
+        )
+
+
+class DuplicateAwareClient:
+    def __init__(self):
+        self.messages = DuplicateAwareMessages()
+
+
 class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
@@ -128,6 +157,27 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
             self.fixture.cell_count(row) == 7
             for row in range(len(self.fixture.rows))
         ))
+
+    def test_isolated_fixture_has_shifted_columns_and_saved_baseline(self):
+        isolated = TrackedTableFixture(ISOLATED_FIXTURE_PATH)
+        self.assertEqual(len(isolated.rows), 2)
+        self.assertTrue(all(
+            isolated.cell_count(row) == 6
+            for row in range(len(isolated.rows))
+        ))
+        self.assertEqual(
+            isolated.paragraphs(0, 2)[0].current_text,
+            "E-II-01-EL",
+        )
+        self.assertEqual(
+            isolated.paragraphs(1, 2)[0].current_text,
+            "E-II-02-EL",
+        )
+        with ZipFile(ISOLATED_FIXTURE_PATH) as archive:
+            web_extension = archive.read(
+                "word/webextensions/webextension1.xml"
+            )
+        self.assertIn(b"translationTool.revisionBaseline.v1", web_extension)
 
     def test_real_whitespace_only_revision_is_semantically_empty(self):
         paragraph = self.fixture.paragraphs(1, 3)[6]
@@ -229,9 +279,9 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.main.get_anthropic_client",
+            "app.adapters.anthropic.get_anthropic_client",
             return_value=FakeNewParagraphClient(),
-        ), patch("app.main.get_anthropic_model", return_value="fixture-model"):
+        ), patch("app.adapters.anthropic.get_anthropic_model", return_value="fixture-model"):
             response = await translate_cell_changes(
                 request,
                 x_request_id="real-docx-new-paragraph",
@@ -285,9 +335,9 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.main.get_anthropic_client",
+            "app.adapters.anthropic.get_anthropic_client",
             return_value=FakeNewParagraphClient(),
-        ), patch("app.main.get_anthropic_model", return_value="fixture-model"):
+        ), patch("app.adapters.anthropic.get_anthropic_model", return_value="fixture-model"):
             response = await translate_cell_changes(
                 request,
                 x_request_id="real-docx-e-ii-02",
@@ -322,10 +372,10 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
             )],
         )
 
-        with self.assertRaises(HTTPException) as raised:
+        with self.assertRaises(PlanValidationError) as raised:
             validate_target_plan(target, incomplete_plan, source_changes)
 
-        self.assertIn("omitted source paragraphs", raised.exception.detail)
+        self.assertIn("omitted source paragraphs", str(raised.exception))
 
     async def test_real_legal_decisions_report_only_failed_paragraph_for_retry(self):
         source_paragraphs = self.fixture.paragraphs(52, 3)
@@ -357,10 +407,10 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.main.get_anthropic_client",
+            "app.adapters.anthropic.get_anthropic_client",
             return_value=PartiallyFailingNewParagraphClient(),
         ), patch(
-            "app.main.get_anthropic_model",
+            "app.adapters.anthropic.get_anthropic_model",
             return_value="fixture-model",
         ), patch.dict(
             os.environ,
@@ -384,6 +434,44 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
             len(translation.edits) == 4
             for translation in response.translations
         ))
+
+    async def test_retry_can_skip_existing_target_without_duplication(self):
+        source = self.fixture.paragraphs(52, 3)
+        first_new_decision = source[21]
+        request = TranslateCellChangesRequest(
+            source_column=3,
+            source_cell=[
+                CellParagraphInput(
+                    index=paragraph.current_index,
+                    text=paragraph.current_text,
+                )
+                for paragraph in source
+                if paragraph.current_index is not None
+            ],
+            changed_source_paragraphs=[changed_input(first_new_decision)],
+            targets=[
+                cell_input(self.fixture, 52, 1, "German"),
+                cell_input(self.fixture, 52, 2, "French"),
+            ],
+        )
+
+        with patch(
+            "app.adapters.anthropic.get_anthropic_client",
+            return_value=DuplicateAwareClient(),
+        ), patch("app.adapters.anthropic.get_anthropic_model", return_value="fixture-model"):
+            response = await translate_cell_changes(
+                request,
+                x_request_id="duplicate-aware-retry",
+            )
+
+        self.assertEqual(
+            response.translations[0].edits[0].operation,
+            "none",
+        )
+        self.assertEqual(
+            response.translations[1].edits[0].operation,
+            "insert",
+        )
 
 
 if __name__ == "__main__":
