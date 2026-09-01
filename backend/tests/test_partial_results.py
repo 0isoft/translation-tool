@@ -1,6 +1,6 @@
 import types
 import unittest
-import os
+from dataclasses import replace
 from unittest.mock import patch
 
 from app.domain.models import (
@@ -12,7 +12,7 @@ from app.domain.models import (
     TargetCellInput,
     TranslateCellChangesRequest,
 )
-from app.main import translate_cell_changes
+from app.main import claude_planner, translate_cell_changes
 
 
 class FakeMessages:
@@ -84,7 +84,15 @@ class PartialResultTests(unittest.IsolatedAsyncioTestCase):
         )
         fake_client = FakeClient()
 
-        with patch.dict(os.environ, {"CLAUDE_MAX_ATTEMPTS": "1"}), patch(
+        single_attempt_settings = replace(
+            claude_planner.settings,
+            claude_max_attempts=1,
+        )
+        with patch.object(
+            claude_planner,
+            "settings",
+            single_attempt_settings,
+        ), patch(
             "app.adapters.anthropic.get_anthropic_client",
             return_value=fake_client,
         ):

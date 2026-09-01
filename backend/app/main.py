@@ -19,6 +19,7 @@ from app.domain.models import (
     TranslateCellChangesResponse,
     TranslationConfig,
 )
+from app.settings import Settings
 
 
 app = FastAPI()
@@ -33,8 +34,9 @@ app.add_middleware(
 )
 
 
-configuration = InMemoryTranslationConfiguration.from_environment()
-claude_planner = AnthropicClaudePlanner()
+settings = Settings.from_environment()
+configuration = InMemoryTranslationConfiguration.from_settings(settings)
+claude_planner = AnthropicClaudePlanner(settings)
 
 
 

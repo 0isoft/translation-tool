@@ -1,9 +1,10 @@
-import os
 import types
 import unittest
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 from app.adapters.anthropic import parse_claude_with_backoff
+from app.main import settings
 
 
 class FlakyMessages:
@@ -27,14 +28,14 @@ class ClaudeRetryTests(unittest.IsolatedAsyncioTestCase):
         client = FlakyClient()
         sleep = AsyncMock()
 
-        with patch.dict(
-            os.environ,
-            {
-                "CLAUDE_MAX_ATTEMPTS": "3",
-                "CLAUDE_BACKOFF_INITIAL_SECONDS": "0.5",
-                "CLAUDE_BACKOFF_MAX_SECONDS": "8",
-            },
-        ), patch(
+        retry_settings = replace(
+            settings,
+            claude_max_attempts=3,
+            claude_backoff_initial_seconds=0.5,
+            claude_backoff_max_seconds=8,
+        )
+
+        with patch(
             "app.adapters.anthropic.get_anthropic_client",
             return_value=client,
         ), patch(
@@ -47,6 +48,7 @@ class ClaudeRetryTests(unittest.IsolatedAsyncioTestCase):
             result = await parse_claude_with_backoff(
                 request_id="retry-test",
                 purpose="test translation",
+                settings=retry_settings,
                 model="fixture-model",
                 messages=[],
                 output_format=types.SimpleNamespace,

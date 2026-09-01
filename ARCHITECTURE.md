@@ -46,8 +46,10 @@ Anthropic adapter -> Claude Messages API
   propagation, plan normalization, safety checks, and numeric warnings.
 - `app/domain/prompts.py`: the complete Claude system prompts.
 - `app/ports/claude.py`: outbound Claude-planning interface.
-- `app/adapters/anthropic.py`: Anthropic SDK, environment configuration,
-  structured parsing, exponential retry, and jitter.
+- `app/settings.py`: the single environment-reading boundary. Every setting is
+  required, parsed, and validated once during application startup.
+- `app/adapters/anthropic.py`: Anthropic SDK, structured parsing, exponential
+  retry, and jitter. It receives typed settings and never reads the environment.
 
 ## Frontend layout
 
@@ -74,7 +76,7 @@ Anthropic adapter -> Claude Messages API
 | Document text and tracked revisions | Word DOCX | Saved with the document |
 | Revision baseline | Word document setting `translationTool.revisionBaseline.v1` | Saved with the document and copied with it |
 | Source column and three language assignments | Backend in-memory configuration | Lost/reset on backend restart |
-| Claude API key, model, timeout, retry settings | `backend/.env.dev` | External configuration |
+| Claude API key, model, timeout, retry and language defaults | `backend/.env.dev`, loaded once into `app.settings.Settings` | Container lifetime |
 | Inspected rows, planned mutations, progress counters | Task-pane JavaScript memory | One button invocation |
 
 The baseline is a JSON object containing counts of SHA-256 fingerprints. A

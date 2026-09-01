@@ -1,93 +1,50 @@
 import asyncio
 import logging
-import os
 import random
 
 from anthropic import AsyncAnthropic
-from fastapi import HTTPException
 
 from app.ports.claude import ResponseValidator
+from app.settings import Settings
 
 
 logger = logging.getLogger("uvicorn.error")
 
 
-def get_anthropic_client() -> AsyncAnthropic:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured",
-        )
-
-    try:
-        timeout_seconds = float(os.getenv("ANTHROPIC_TIMEOUT_SECONDS", "180"))
-        max_retries = int(os.getenv("ANTHROPIC_MAX_RETRIES", "1"))
-    except ValueError as error:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "ANTHROPIC_TIMEOUT_SECONDS and ANTHROPIC_MAX_RETRIES must "
-                "be numeric."
-            ),
-        ) from error
-
+def get_anthropic_client(settings: Settings) -> AsyncAnthropic:
     return AsyncAnthropic(
-        api_key=api_key,
-        timeout=timeout_seconds,
-        max_retries=max_retries,
+        api_key=settings.anthropic_api_key,
+        timeout=settings.anthropic_timeout_seconds,
+        max_retries=settings.anthropic_max_retries,
     )
 
 
-def get_anthropic_model() -> str:
-    model = os.getenv("ANTHROPIC_MODEL")
-
-    if not model:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_MODEL is not configured",
-        )
-
-    return model
+def get_anthropic_model(settings: Settings) -> str:
+    return settings.anthropic_model
 
 
-def get_claude_retry_config() -> tuple[int, float, float]:
-    try:
-        max_attempts = int(os.getenv("CLAUDE_MAX_ATTEMPTS", "3"))
-        initial_delay = float(
-            os.getenv("CLAUDE_BACKOFF_INITIAL_SECONDS", "0.75")
-        )
-        maximum_delay = float(
-            os.getenv("CLAUDE_BACKOFF_MAX_SECONDS", "8")
-        )
-    except ValueError as error:
-        raise HTTPException(
-            status_code=503,
-            detail="Claude retry settings must be numeric.",
-        ) from error
-
-    if max_attempts < 1 or initial_delay < 0 or maximum_delay < 0:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "CLAUDE_MAX_ATTEMPTS must be at least 1 and backoff delays "
-                "cannot be negative."
-            ),
-        )
-
-    return max_attempts, initial_delay, maximum_delay
+def get_claude_retry_config(
+    settings: Settings,
+) -> tuple[int, float, float]:
+    return (
+        settings.claude_max_attempts,
+        settings.claude_backoff_initial_seconds,
+        settings.claude_backoff_max_seconds,
+    )
 
 
 async def parse_claude_with_backoff(
     *,
     request_id: str,
     purpose: str,
+    settings: Settings,
     response_validator=None,
     **parse_arguments,
 ):
-    max_attempts, initial_delay, maximum_delay = get_claude_retry_config()
-    client = get_anthropic_client()
+    max_attempts, initial_delay, maximum_delay = get_claude_retry_config(
+        settings
+    )
+    client = get_anthropic_client(settings)
 
     for attempt in range(1, max_attempts + 1):
         try:
@@ -122,9 +79,12 @@ async def parse_claude_with_backoff(
 class AnthropicClaudePlanner:
     """Claude SDK adapter implementing the application's outbound port."""
 
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
     @property
     def model(self) -> str:
-        return get_anthropic_model()
+        return get_anthropic_model(self.settings)
 
     async def parse(
         self,
@@ -137,7 +97,7 @@ class AnthropicClaudePlanner:
         return await parse_claude_with_backoff(
             request_id=request_id,
             purpose=purpose,
+            settings=self.settings,
             response_validator=response_validator,
             **parse_arguments,
         )
-

@@ -11,7 +11,9 @@ Prerequisites:
 - trusted Office development certificates in
   `/Users/octavian/.office-addin-dev-certs` or a custom directory supplied as
   `OFFICE_CERTS_DIR`;
-- `backend/.env.dev` containing the Anthropic API key and model.
+- `backend/.env.dev` containing every variable listed in
+  `backend/.env.example`. Copy the example when creating another environment;
+  the backend refuses to start if any entry is missing or invalid.
 
 Start the application:
 

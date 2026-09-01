@@ -1,7 +1,7 @@
 from pathlib import Path
-import os
 import types
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 from zipfile import ZipFile
 
@@ -22,7 +22,7 @@ from app.domain.translation_rules import (
     is_effectively_new_paragraph,
     validate_target_plan,
 )
-from app.main import translate_cell_changes
+from app.main import claude_planner, translate_cell_changes
 from tests.docx_fixture import DocxParagraph, TrackedTableFixture
 
 
@@ -406,18 +406,21 @@ class RealDocxCellTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+        retry_settings = replace(
+            claude_planner.settings,
+            claude_max_attempts=3,
+            claude_backoff_initial_seconds=0,
+        )
         with patch(
             "app.adapters.anthropic.get_anthropic_client",
             return_value=PartiallyFailingNewParagraphClient(),
         ), patch(
             "app.adapters.anthropic.get_anthropic_model",
             return_value="fixture-model",
-        ), patch.dict(
-            os.environ,
-            {
-                "CLAUDE_MAX_ATTEMPTS": "3",
-                "CLAUDE_BACKOFF_INITIAL_SECONDS": "0",
-            },
+        ), patch.object(
+            claude_planner,
+            "settings",
+            retry_settings,
         ):
             response = await translate_cell_changes(
                 request,

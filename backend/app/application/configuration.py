@@ -1,6 +1,5 @@
-import os
-
 from app.domain.models import Language, TranslationConfig
+from app.settings import Settings
 
 
 class ConfigurationError(ValueError):
@@ -16,20 +15,16 @@ class InMemoryTranslationConfiguration:
         self._languages = languages.copy()
 
     @classmethod
-    def from_environment(cls) -> "InMemoryTranslationConfiguration":
-        try:
-            source_column = int(os.getenv("SOURCE_COLUMN", "3"))
-        except ValueError as error:
-            raise ConfigurationError(
-                "SOURCE_COLUMN must be 1, 2, or 3"
-            ) from error
-
+    def from_settings(
+        cls,
+        settings: Settings,
+    ) -> "InMemoryTranslationConfiguration":
         languages: dict[int, Language] = {
-            1: os.getenv("COLUMN_1_LANGUAGE", "German"),
-            2: os.getenv("COLUMN_2_LANGUAGE", "French"),
-            3: os.getenv("COLUMN_3_LANGUAGE", "English"),
+            1: settings.column_1_language,
+            2: settings.column_2_language,
+            3: settings.column_3_language,
         }
-        return cls(source_column, languages)
+        return cls(settings.source_column, languages)
 
     @staticmethod
     def _validate(source_column: int, languages: dict[int, str]) -> None:
