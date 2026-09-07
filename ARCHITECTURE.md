@@ -191,7 +191,8 @@ both fall back to Claude.
   Nginx container or Docker runtime in this deployment.
 - `/api/*` and the dynamically generated `/manifest.xml` route to FastAPI;
   all other paths route to the Vite frontend.
-- `PUBLIC_BASE_URL` supplies the stable production HTTPS origin embedded in
-  the manifest's task-pane, icon, and support URLs.
+- The manifest derives its task-pane, icon, and support URLs from the HTTPS
+  origin that served the manifest, so preview, production, and custom domains
+  cannot accidentally emit localhost URLs.
 - FastAPI function instances are disposable. Translation requests are
   self-contained, and no user configuration relies on process memory.

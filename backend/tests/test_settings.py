@@ -6,7 +6,6 @@ from app.settings import Settings, SettingsError
 
 
 VALID_ENVIRONMENT = {
-    "PUBLIC_BASE_URL": "https://translator.example.com",
     "ANTHROPIC_API_KEY": "test-key",
     "ANTHROPIC_MODEL": "test-model",
     "ANTHROPIC_TIMEOUT_SECONDS": "180",
@@ -24,10 +23,6 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.anthropic_timeout_seconds, 180)
         self.assertEqual(settings.claude_max_attempts, 3)
-        self.assertEqual(
-            settings.public_base_url,
-            "https://translator.example.com",
-        )
 
     def test_missing_variable_fails_with_its_name(self):
         incomplete = VALID_ENVIRONMENT.copy()
@@ -40,10 +35,10 @@ class SettingsTests(unittest.TestCase):
             ):
                 Settings.from_environment()
 
-    def test_invalid_public_base_url_fails_at_startup(self):
+    def test_invalid_timeout_fails_at_startup(self):
         invalid = {
             **VALID_ENVIRONMENT,
-            "PUBLIC_BASE_URL": "http://translator.example.com/taskpane",
+            "ANTHROPIC_TIMEOUT_SECONDS": "0",
         }
 
         with patch.dict(os.environ, invalid, clear=True):

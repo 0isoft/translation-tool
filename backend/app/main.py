@@ -1,5 +1,7 @@
 import uuid
-from fastapi import FastAPI, Header, HTTPException
+from xml.sax.saxutils import escape
+
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response
 
 from app.application.translation_service import (
@@ -28,16 +30,37 @@ def health():
     return {"status": "ok"}
 
 
+def request_origin(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    scheme = (
+        forwarded_proto.split(",", 1)[0].strip()
+        if forwarded_proto
+        else request.url.scheme
+    )
+    host = (
+        forwarded_host.split(",", 1)[0].strip()
+        if forwarded_host
+        else request.headers.get("host", request.url.netloc)
+    )
+    if scheme not in {"http", "https"} or not host:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot determine the public request origin.",
+        )
+    return escape(f"{scheme}://{host}", {'"': "&quot;"})
+
+
 @app.get("/manifest.xml", include_in_schema=False)
-def manifest():
-    base_url = settings.public_base_url
+def manifest(request: Request):
+    base_url = request_origin(request)
     content = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <OfficeApp
     xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:type="TaskPaneApp">
   <Id>39DA7B46-3E25-4FE8-86C0-77B1B75AF0AC</Id>
-  <Version>1.0.1.0</Version>
+  <Version>1.0.2.0</Version>
   <ProviderName>Translation Tool</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Translation Assistant"/>

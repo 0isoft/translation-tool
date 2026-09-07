@@ -1,6 +1,5 @@
 import os
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 
 class SettingsError(RuntimeError):
@@ -38,7 +37,6 @@ def _number(name: str) -> float:
 
 @dataclass(frozen=True)
 class Settings:
-    public_base_url: str
     anthropic_api_key: str
     anthropic_model: str
     anthropic_timeout_seconds: float
@@ -50,7 +48,6 @@ class Settings:
     @classmethod
     def from_environment(cls) -> "Settings":
         settings = cls(
-            public_base_url=_required("PUBLIC_BASE_URL").rstrip("/"),
             anthropic_api_key=_required("ANTHROPIC_API_KEY"),
             anthropic_model=_required("ANTHROPIC_MODEL"),
             anthropic_timeout_seconds=_number(
@@ -69,15 +66,6 @@ class Settings:
         return settings
 
     def validate(self) -> None:
-        public_url = urlparse(self.public_base_url)
-        if public_url.scheme != "https" or not public_url.netloc \
-                or public_url.path not in ("", "/") \
-                or public_url.params or public_url.query \
-                or public_url.fragment:
-            raise SettingsError(
-                "PUBLIC_BASE_URL must be an HTTPS origin without a path, "
-                "query, or fragment."
-            )
         if self.anthropic_timeout_seconds <= 0:
             raise SettingsError("ANTHROPIC_TIMEOUT_SECONDS must be positive.")
         if self.anthropic_max_retries < 0:
